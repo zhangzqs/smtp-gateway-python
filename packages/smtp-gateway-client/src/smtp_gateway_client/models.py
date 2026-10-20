@@ -20,7 +20,6 @@ class SmtpSettings(BaseModel):
     )
 
     configured: bool
-    read_only: bool = False
     host: str = ""
     port: int = Field(
         default=587,

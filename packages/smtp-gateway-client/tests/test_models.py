@@ -51,7 +51,7 @@ def test_host_rejects_embedded_credentials_paths_and_whitespace(host: str) -> No
 def test_unknown_request_fields_are_rejected() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         SmtpSettingsWrite.model_validate(
-            {"host": "smtp.example.com", "port": 587, "read_only": True}
+            {"host": "smtp.example.com", "port": 587, "unexpected_setting": True}
         )
 
 
@@ -66,13 +66,11 @@ def test_password_is_hidden_by_model_serialization_and_repr() -> None:
     assert body.password.get_secret_value() == value
 
 
-def test_response_filters_secret_fields_and_preserves_read_only() -> None:
+def test_response_filters_secret_fields_and_keeps_setting_defaults() -> None:
     response = SmtpSettings.model_validate(
         {"configured": False, "password": "private-response-credential"}
     )
-    assert response.read_only is False
     assert response.port == 587
     assert response.host == ""
     assert "password" not in response.model_dump()
     assert "private-response-credential" not in repr(response)
-    assert response.model_copy(update={"read_only": True}).read_only is True

@@ -4,6 +4,7 @@
 
 ## 结构与边界
 
+- 运行时、公共协议、构建和测试保持独立，使用本仓库自己的配置与工具链；调用方专属策略由调用方维护。
 - `packages/smtp-gateway-server/` 是服务包，`packages/smtp-gateway-client/` 是可独立安装的 HTTP 管理客户端与协议模型包。
 - 下列服务端分层均相对于 `packages/smtp-gateway-server/src/smtp_gateway/`；客户端包不依赖服务实现或持久层。
 - `app.py` 装配具体依赖，管理监听器、worker 和数据库的生命周期。
