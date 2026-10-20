@@ -3,9 +3,9 @@
 独立的持久化 SMTP 网关：调用方通过 SMTP
 AUTH 提交邮件，网关持久化后返回成功，再由后台连接指定的上游 SMTP 投递。支持 SQLite 和 PostgreSQL，可供 Grafana 等内部服务使用。
 
-HTTP API 管理上游配置并查询投递记录，邮件通过 SMTP Submission 接收。正文和上游密码使用部署方提供的 Fernet 密钥加密保存。
+HTTP API 管理上游配置并查询投递记录与邮件内容，邮件通过 SMTP Submission 接收。主题、正文和上游密码使用部署方提供的 Fernet 密钥加密保存。
 
-项目使用 uv workspace 管理两个发行包，当前版本均为 `0.0.4`：
+项目使用 uv workspace 管理两个发行包，当前版本均为 `0.0.5`：
 
 | 发行包                | Python 包             | 职责                                 |
 | --------------------- | --------------------- | ------------------------------------ |
@@ -95,10 +95,19 @@ curl --fail --user "$SMTP_GATEWAY_HTTP__AUTH__USERNAME:$SMTP_GATEWAY_HTTP__AUTH_
 
 `GET /v1/messages?page=1&page_size=20` 使用相同的 HTTP Basic Auth，按创建时间倒序分页返回
 `items`、`total`、`page` 和 `page_size`。`page` 从 1 开始，`page_size` 默认为 20，最大为 100。
-每条邮件包含 `id`、`sender`、UTC 格式的 `created_at` 和 `deliveries` 数组；每个收件人包含
+每条邮件包含 `id`、`sender`、`subject`、UTC 格式的 `created_at` 和 `deliveries` 数组；每个收件人包含
 `recipient`、`state`、`attempts` 和 `last_error`。状态为 `pending`、`sending`、`delivered` 或 `failed`。
 相同创建时间的记录按 ID 倒序排列。接口不返回邮件正文、认领 token 或上游凭据，不提供 HTTP 邮件提交能力。
 记录随邮件保留期清理。
+
+### 邮件内容
+
+`GET /v1/messages/{id}/content` 使用相同的 HTTP Basic Auth，按需解密单封邮件，返回
+`id`、`subject`、`text` 和 `html`。主题与正文按 MIME 编码和字符集解码，显式附件与附加的转发邮件不作为正文；缺失的正文格式返回 `null`。
+内容只以 JSON 返回，响应设置 `Cache-Control: no-store`；邮件不存在或已按保留期清理时返回 `404`。
+
+邮件 HTML 来自外部输入。网页调用方应清洗 HTML，并在禁用脚本、导航与外部资源加载的隔离区域展示，不能直接插入管理页面。
+列表查询仅解密独立保存的主题，不读取或解析整封邮件正文。升级时自动补齐主题列，并分批为历史邮件提取加密主题；原始邮件与投递记录保持不变。
 
 ## 持久化与重试
 
@@ -113,8 +122,8 @@ SMTP 成功确认发生在邮件正文和所有收件人任务提交到同一数
 ## 容器运行
 
 ```sh
-docker pull ghcr.io/zhangzqs/smtp-gateway-python:0.0.4
-docker run --rm ghcr.io/zhangzqs/smtp-gateway-python:0.0.4 --version
+docker pull ghcr.io/zhangzqs/smtp-gateway-python:0.0.5
+docker run --rm ghcr.io/zhangzqs/smtp-gateway-python:0.0.5 --version
 ```
 
 也可以在仓库根目录运行 `docker build --tag smtp-gateway-python:local .` 从源码构建。运行镜像基于 Alpine，原生依赖使用 musllinux wheel；uv、安装清单和构建产物通过
@@ -133,7 +142,7 @@ docker run --rm \
   --env SMTP_GATEWAY_HTTP__AUTH__PASSWORD \
   --env SMTP_GATEWAY_SMTP__AUTH__PASSWORD \
   --env SMTP_GATEWAY_DATABASE__ENCRYPTION_KEY \
-  ghcr.io/zhangzqs/smtp-gateway-python:0.0.4 --config-file /etc/smtp-gateway/config.yaml
+  ghcr.io/zhangzqs/smtp-gateway-python:0.0.5 --config-file /etc/smtp-gateway/config.yaml
 ```
 
 ## Python 管理客户端
@@ -141,7 +150,7 @@ docker run --rm \
 内部调用方可以单独安装发布的客户端 wheel，无需安装 SMTP 服务或数据库依赖：
 
 ```sh
-uv add "smtp-gateway-client @ https://github.com/zhangzqs/smtp-gateway-python/releases/download/v0.0.4/smtp_gateway_client-0.0.4-py3-none-any.whl"
+uv add "smtp-gateway-client @ https://github.com/zhangzqs/smtp-gateway-python/releases/download/v0.0.5/smtp_gateway_client-0.0.5-py3-none-any.whl"
 ```
 
 客户端从 `smtp_gateway_client` 导入，提供 `SmtpGatewayClient`、`SmtpSettings`、`SmtpSettingsWrite`、`TlsMode`

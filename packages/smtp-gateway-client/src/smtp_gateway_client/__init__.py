@@ -4,6 +4,7 @@ from .client import SmtpGatewayAPIError, SmtpGatewayClient
 from .models import (
     DeliveryState,
     DeliveryStatus,
+    MessageContent,
     MessagePage,
     MessageRecord,
     SmtpSettings,
@@ -14,6 +15,7 @@ from .models import (
 __all__ = [
     "DeliveryState",
     "DeliveryStatus",
+    "MessageContent",
     "MessagePage",
     "MessageRecord",
     "SmtpGatewayAPIError",

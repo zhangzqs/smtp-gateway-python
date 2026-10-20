@@ -7,6 +7,7 @@ from pydantic import SecretStr, ValidationError
 
 from smtp_gateway_client import (
     DeliveryState,
+    MessageContent,
     MessagePage,
     MessageRecord,
     SmtpSettings,
@@ -105,6 +106,7 @@ def test_message_record_normalizes_time_and_filters_nonpublic_fields() -> None:
         }
     )
     assert response.created_at == datetime(2026, 10, 20, 4, 30, tzinfo=UTC)
+    assert response.subject == ""
     assert response.model_dump(mode="json")["created_at"] == "2026-10-20T04:30:00Z"
     assert response.deliveries[0].state == DeliveryState.DELIVERED
     assert response.deliveries[0].attempts == 2
@@ -146,3 +148,23 @@ def test_message_page_defaults_to_twenty_items_on_first_page() -> None:
 def test_message_page_rejects_invalid_pagination(values: dict[str, int]) -> None:
     with pytest.raises(ValidationError):
         MessagePage.model_validate({"items": [], "total": 0, **values})
+
+
+def test_message_content_keeps_optional_bodies_and_filters_unrelated_fields() -> None:
+    response = MessageContent.model_validate(
+        {
+            "id": "message-id",
+            "subject": "告警测试",
+            "text": None,
+            "html": "<p>Alert details</p>",
+            "password": "private-response-credential",
+            "attachments": ["private-attachment"],
+        }
+    )
+    assert response.text is None
+    assert response.html == "<p>Alert details</p>"
+    assert response.subject == "告警测试"
+    assert set(response.model_dump()) == {"id", "subject", "text", "html"}
+    assert "private-response-credential" not in response.model_dump_json()
+    assert "private-attachment" not in response.model_dump_json()
+    assert "Alert details" not in repr(response)

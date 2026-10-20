@@ -2,11 +2,12 @@
 
 from http import HTTPMethod, HTTPStatus
 from typing import TypeVar
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel
 
-from .models import MessagePage, SmtpSettings, SmtpSettingsWrite
+from .models import MessageContent, MessagePage, SmtpSettings, SmtpSettingsWrite
 
 _Response = TypeVar("_Response", bound=BaseModel)
 
@@ -88,6 +89,15 @@ class SmtpGatewayClient:
             "/v1/messages",
             MessagePage,
             params={"page": page, "page_size": page_size},
+        )
+
+    async def get_message_content(self, identifier: str) -> MessageContent:
+        """读取指定邮件的主题与纯文本、HTML 正文，不返回附件。"""
+        segment = quote(identifier, safe="").replace(".", "%2E")
+        return await self._request(
+            HTTPMethod.GET,
+            f"/v1/messages/{segment}/content",
+            MessageContent,
         )
 
     async def close(self) -> None:

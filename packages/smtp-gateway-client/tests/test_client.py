@@ -13,6 +13,7 @@ from typing_extensions import override
 
 from smtp_gateway_client import (
     DeliveryState,
+    MessageContent,
     MessagePage,
     SmtpGatewayAPIError,
     SmtpGatewayClient,
@@ -233,6 +234,7 @@ async def test_list_messages_uses_basic_auth_and_pagination_query(
                     {
                         "id": "message-id",
                         "sender": "sender@example.com",
+                        "subject": "告警测试",
                         "created_at": "2026-10-20T04:30:00Z",
                         "content": "private-email-body",
                         "deliveries": [
@@ -276,6 +278,7 @@ async def test_list_messages_uses_basic_auth_and_pagination_query(
     assert result.page == options.get("page", 1)
     assert result.page_size == options.get("page_size", 20)
     assert result.items[0].deliveries[0].state == DeliveryState.PENDING
+    assert result.items[0].subject == "告警测试"
     assert "private-email-body" not in result.model_dump_json()
 
 
@@ -347,3 +350,111 @@ async def test_list_messages_rejects_invalid_pagination_before_request(
     finally:
         await client.close()
     respond.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("identifier", "segment"),
+    [
+        ("message-id", "message-id"),
+        ("a/b?c#d%", "a%2Fb%3Fc%23d%25"),
+        ("..", "%2E%2E"),
+    ],
+)
+async def test_get_message_content_uses_basic_auth_and_encodes_the_identifier(
+    identifier: str, segment: str
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": identifier,
+                "subject": "告警测试",
+                "text": "Alert details",
+                "html": "<p>Alert details</p>",
+                "password": _SMTP_VALUE,
+            },
+        )
+
+    client = SmtpGatewayClient(
+        url="https://gateway.example.com/",
+        username="operator",
+        password=_API_VALUE,
+        transport=httpx.MockTransport(respond),
+    )
+    try:
+        result = await client.get_message_content(identifier)
+    finally:
+        await client.close()
+
+    assert isinstance(result, MessageContent)
+    assert result.id == identifier
+    assert result.subject == "告警测试"
+    assert result.text == "Alert details"
+    assert result.html == "<p>Alert details</p>"
+    assert _SMTP_VALUE not in result.model_dump_json()
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "GET"
+    assert request.url.raw_path == f"/v1/messages/{segment}/content".encode()
+    authorization = base64.b64encode(f"operator:{_API_VALUE}".encode()).decode()
+    assert request.headers["authorization"] == f"Basic {authorization}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    [
+        (httpx.Response(401, text=_API_VALUE), 401),
+        (httpx.Response(404, text="private-email-body"), 404),
+        (httpx.Response(500, text="private-email-body"), 500),
+        (
+            httpx.Response(
+                307,
+                headers={
+                    "Location": "https://other.example.com/v1/messages/id/content"
+                },
+            ),
+            307,
+        ),
+        (httpx.Response(200, content=b"private-email-body"), 502),
+        (httpx.Response(200, json={"id": "private-email-body"}), 502),
+        (httpx.ConnectError(_API_VALUE), 502),
+    ],
+)
+async def test_message_content_errors_hide_response_content_and_credentials(
+    outcome: httpx.Response | httpx.HTTPError, expected_status: int
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if isinstance(outcome, httpx.HTTPError):
+            raise outcome
+        return outcome
+
+    client = SmtpGatewayClient(
+        url="https://gateway.example.com",
+        username="operator",
+        password=_API_VALUE,
+        transport=httpx.MockTransport(respond),
+    )
+    try:
+        with pytest.raises(SmtpGatewayAPIError) as error:
+            await client.get_message_content("message-id")
+    finally:
+        await client.close()
+
+    assert error.value.status_code == expected_status
+    assert str(error.value) == (
+        "SMTP gateway GET /v1/messages/message-id/content "
+        f"failed with HTTP {expected_status}"
+    )
+    assert _API_VALUE not in repr(error.value)
+    assert _SMTP_VALUE not in repr(error.value)
+    assert "private-email-body" not in repr(error.value)
+    assert len(requests) == 1
+    assert requests[0].url.host == "gateway.example.com"

@@ -6,13 +6,19 @@ from typing import Annotated, Protocol
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from smtp_gateway_client import MessagePage, SmtpSettings, SmtpSettingsWrite
+from smtp_gateway_client import (
+    MessageContent,
+    MessagePage,
+    SmtpSettings,
+    SmtpSettingsWrite,
+)
 
 
 class _Settings(Protocol):
     async def get_smtp(self) -> SmtpSettings: ...
     async def put_smtp(self, body: SmtpSettingsWrite) -> SmtpSettings: ...
     async def list_messages(self, *, page: int, page_size: int) -> MessagePage: ...
+    async def get_message_content(self, identifier: str) -> MessageContent | None: ...
 
 
 def create_router(*, settings: _Settings, username: str, password: str) -> APIRouter:
@@ -59,6 +65,20 @@ def create_router(*, settings: _Settings, username: str, password: str) -> APIRo
         """分页查询邮件与收件人状态，不返回邮件正文。"""
         response.headers["Cache-Control"] = "no-store"
         return await settings.list_messages(page=page, page_size=page_size)
+
+    @router.get("/messages/{identifier}/content")
+    async def get_message_content(
+        identifier: str, response: Response
+    ) -> MessageContent:
+        """读取单封邮件的主题和正文，内容只以 JSON 返回。"""
+        headers = {"Cache-Control": "no-store"}
+        content = await settings.get_message_content(identifier)
+        if content is None:
+            raise HTTPException(
+                status_code=404, detail="Message not found", headers=headers
+            )
+        response.headers.update(headers)
+        return content
 
     return router
 

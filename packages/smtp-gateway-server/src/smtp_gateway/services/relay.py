@@ -17,12 +17,15 @@ from smtp_gateway.shared import (
     Upstream,
 )
 from smtp_gateway_client import (
+    MessageContent,
     MessagePage,
     MessageRecord,
     SmtpSettings,
     SmtpSettingsWrite,
     TlsMode,
 )
+
+from .content import parse_message_content, parse_subject
 
 
 class RelayService:
@@ -41,6 +44,21 @@ class RelayService:
             sample = await repository.sample_content()
             if sample is not None:
                 self._decrypt(sample)
+        await self._backfill_subjects()
+
+    async def _backfill_subjects(self) -> None:
+        while True:
+            async with self._database.session() as session, session.begin():
+                repository = RelayRepository(session)
+                messages = await repository.messages_without_subject(limit=10)
+                if not messages:
+                    return
+                for message in messages:
+                    subject = parse_subject(self._decrypt(message.content))
+                    await repository.set_subject(
+                        identifier=message.id,
+                        subject=self._cipher.encrypt(subject.encode()),
+                    )
 
     async def close(self) -> None:
         """关闭持久层资源。"""
@@ -137,6 +155,7 @@ class RelayService:
                 identifier=identifier,
                 sender=sender,
                 recipients=list(dict.fromkeys(recipients)),
+                subject=self._cipher.encrypt(parse_subject(content).encode()),
                 content=self._cipher.encrypt(content),
                 now=await repository.now(),
             )
@@ -189,6 +208,9 @@ class RelayService:
                     MessageRecord(
                         id=message.id,
                         sender=message.sender,
+                        subject=self._decrypt(message.subject).decode()
+                        if message.subject is not None
+                        else "",
                         created_at=datetime.fromtimestamp(message.created_at, UTC),
                         deliveries=deliveries[message.id],
                     )
@@ -198,6 +220,14 @@ class RelayService:
                 page=page,
                 page_size=page_size,
             )
+
+    async def get_message_content(self, identifier: str) -> MessageContent | None:
+        """按需解密并解析单封邮件的主题与正文。"""
+        async with self._database.session() as session:
+            message = await RelayRepository(session).message(identifier)
+            if message is None:
+                return None
+            return parse_message_content(identifier, self._decrypt(message.content))
 
     async def claim(
         self, *, max_attempts: int, lease_seconds: float
