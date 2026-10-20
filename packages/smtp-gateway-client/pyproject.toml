@@ -1,6 +1,6 @@
 [project]
 name = "smtp-gateway-client"
-version = "0.0.5"
+version = "0.0.6"
 description = "Async Python client for SMTP gateway configuration"
 readme = "README.md"
 requires-python = ">=3.11,<3.16"
