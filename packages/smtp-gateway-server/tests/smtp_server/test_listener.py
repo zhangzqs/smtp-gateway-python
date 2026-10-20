@@ -144,6 +144,60 @@ async def test_smtp_credentials_are_checked_and_failures_are_unhandled(
 
 
 @pytest.mark.asyncio
+async def test_plain_submission_advertises_login_and_requires_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protocols: list[SMTP] = []
+
+    async def create_server(factory: object, *_args: object) -> AsyncMock:
+        assert callable(factory)
+        protocol = factory()
+        assert isinstance(protocol, SMTP)
+        protocols.append(protocol)
+        return AsyncMock(close=Mock())
+
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "create_server", create_server)
+    listener = SmtpListener(
+        handler=SubmissionHandler(service=AsyncMock(), max_recipients=1),
+        host="127.0.0.1",
+        port=1025,
+        username="grafana",
+        password="test-smtp-credential",  # noqa: S106 - 仅用于认证行为测试
+        tls_context=None,
+        max_message_bytes=1024,
+    )
+    await listener.start()
+    protocol = protocols[0]
+    protocol.session = Session(loop)
+    push = AsyncMock()
+    monkeypatch.setattr(protocol, "push", push)
+    try:
+        await protocol.smtp_EHLO("grafana")
+        responses = [call.args[0] for call in push.await_args_list]
+        assert "250-AUTH LOGIN" in responses
+        assert "250-STARTTLS" not in responses
+
+        push.reset_mock()
+        await protocol.smtp_MAIL("FROM:<sender@example.com>")
+        push.assert_awaited_once_with("530 5.7.0 Authentication required")
+
+        challenge = AsyncMock(
+            side_effect=[b"grafana", b"test-smtp-credential"],
+        )
+        monkeypatch.setattr(protocol, "challenge_auth", challenge)
+        push.reset_mock()
+        await protocol.smtp_AUTH("LOGIN")
+        assert [call.args[0] for call in challenge.await_args_list] == [
+            "Username:",
+            "Password:",
+        ]
+        push.assert_awaited_once_with("235 2.7.0 Authentication successful")
+    finally:
+        await listener.close()
+
+
+@pytest.mark.asyncio
 async def test_starttls_transport_replacement_does_not_retain_raw_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

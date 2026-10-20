@@ -1,6 +1,6 @@
 [project]
 name = "smtp-gateway-workspace"
-version = "0.0.1"
+version = "0.0.2"
 description = "SMTP gateway server and management API client workspace"
 requires-python = ">=3.11,<3.12"
 dependencies = [

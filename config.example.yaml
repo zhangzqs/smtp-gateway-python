@@ -1,5 +1,6 @@
 # 密码和 Fernet 密钥通过 SMTP_GATEWAY_ 环境变量注入。
 # 例如 SMTP_GATEWAY_HTTP__AUTH__PASSWORD；YAML 不执行变量插值。
+# 此示例用于受信任内网，无 TLS 的 SMTP AUTH 仅提供认证。
 http:
   host: 0.0.0.0
   port: 8080
@@ -11,10 +12,7 @@ smtp:
   port: 1025
   auth:
     username: submission
-  tls:
-    cert_file: /run/secrets/smtp-server-cert.pem
-    key_file: /run/secrets/smtp-server-key.pem
-  allow_insecure_auth: false
+  allow_insecure_auth: true
 
 database:
   url: sqlite+aiosqlite:////data/smtp-gateway.db
