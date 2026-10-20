@@ -7,7 +7,7 @@ from typing import Protocol
 
 import aiosmtplib
 
-from gstack_smtp_gateway.shared import ClaimedDelivery, Upstream
+from smtp_gateway.shared import ClaimedDelivery, Upstream
 
 logger = logging.getLogger(__name__)
 

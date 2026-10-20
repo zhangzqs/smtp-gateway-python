@@ -3,7 +3,7 @@
 from sqlalchemy import Float, ForeignKey, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from gstack_smtp_gateway.shared import DeliveryState, TlsMode
+from smtp_gateway.shared import DeliveryState, TlsMode
 
 
 class GatewayBase(DeclarativeBase):
@@ -11,7 +11,7 @@ class GatewayBase(DeclarativeBase):
 
 
 class SmtpSettingsRow(GatewayBase):
-    __tablename__ = "gstack_smtp_settings"
+    __tablename__ = "smtp_settings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     version: Mapped[int] = mapped_column(default=0)
@@ -23,7 +23,7 @@ class SmtpSettingsRow(GatewayBase):
 
 
 class MessageRow(GatewayBase):
-    __tablename__ = "gstack_smtp_messages"
+    __tablename__ = "smtp_messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     sender: Mapped[str] = mapped_column(String(320))
@@ -32,12 +32,12 @@ class MessageRow(GatewayBase):
 
 
 class DeliveryRow(GatewayBase):
-    __tablename__ = "gstack_smtp_deliveries"
-    __table_args__ = (Index("ix_gstack_smtp_due", "state", "next_attempt_at"),)
+    __tablename__ = "smtp_deliveries"
+    __table_args__ = (Index("ix_smtp_due", "state", "next_attempt_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     message_id: Mapped[str] = mapped_column(
-        ForeignKey("gstack_smtp_messages.id", ondelete="CASCADE"), index=True
+        ForeignKey("smtp_messages.id", ondelete="CASCADE"), index=True
     )
     recipient: Mapped[str] = mapped_column(String(320))
     state: Mapped[str] = mapped_column(String(16), default=DeliveryState.PENDING)

@@ -9,9 +9,9 @@ import pytest
 from aiosmtpd.smtp import SMTP, AuthResult, Envelope, LoginPassword, Session
 from sqlalchemy.exc import OperationalError
 
-from gstack_smtp_gateway.services import MessageService
-from gstack_smtp_gateway.shared import MessageTooLargeError, NotConfiguredError
-from gstack_smtp_gateway.smtp_server import SmtpListener, SubmissionHandler
+from smtp_gateway.services import MessageService
+from smtp_gateway.shared import MessageTooLargeError, NotConfiguredError
+from smtp_gateway.smtp_server import SmtpListener, SubmissionHandler
 
 
 @pytest.mark.asyncio
@@ -121,9 +121,7 @@ async def test_smtp_credentials_are_checked_and_failures_are_unhandled(
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr(
-        "gstack_smtp_gateway.smtp_server.listener._TrackedSMTP", protocol
-    )
+    monkeypatch.setattr("smtp_gateway.smtp_server.listener._TrackedSMTP", protocol)
     await listener.start()
     assert not logging.getLogger("mail.log").isEnabledFor(logging.DEBUG)
     factory = captured["factory"]

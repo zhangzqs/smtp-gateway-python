@@ -11,7 +11,7 @@ from aiosmtpd.smtp import SMTP, AuthResult, Envelope, LoginPassword, Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing_extensions import override
 
-from gstack_smtp_gateway.shared import (
+from smtp_gateway.shared import (
     MessageTooLargeError,
     NotConfiguredError,
     validate_address,
@@ -102,7 +102,7 @@ class _TrackedSMTP(SMTP):
         super().__init__(
             handler=handler,
             loop=loop,
-            hostname="gstack-smtp-gateway",
+            hostname="smtp-gateway",
             authenticator=authenticate,
             auth_required=True,
             auth_require_tls=tls_context is not None,

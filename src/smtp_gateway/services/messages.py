@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from gstack_smtp_gateway.shared import MessageTooLargeError, validate_address
+from smtp_gateway.shared import MessageTooLargeError, validate_address
 
 
 class _Queue(Protocol):

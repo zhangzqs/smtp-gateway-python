@@ -61,46 +61,47 @@ def create_app(config: GatewayConfig) -> FastAPI:
     """启动时完成数据库与监听端口检查，退出时先停止接收再关闭连接。"""
     database = Database(
         engine=create_async_engine(
-            config.database_url.get_secret_value(), pool_pre_ping=True
+            config.database.url.get_secret_value(), pool_pre_ping=True
         ),
     )
     relay = RelayService(
-        database=database, encryption_key=config.encryption_key.get_secret_value()
+        database=database,
+        encryption_key=config.database.encryption_key.get_secret_value(),
     )
     messages = MessageService(
         relay=relay,
-        max_message_bytes=config.max_message_bytes,
-        max_recipients=config.max_recipients,
+        max_message_bytes=config.limits.max_message_bytes,
+        max_recipients=config.limits.max_recipients,
     )
     worker = DeliveryWorker(
         relay=relay,
         sender=SmtpSender(),
         policy=RetryPolicy(
-            max_attempts=config.max_attempts,
-            retry_delay=config.retry_delay,
-            max_retry_delay=config.max_retry_delay,
-            delivery_timeout=config.delivery_timeout,
-            lease_seconds=config.lease_seconds,
-            poll_interval=config.poll_interval,
-            concurrency=config.worker_concurrency,
-            retention_seconds=config.retention_seconds,
+            max_attempts=config.delivery.max_attempts,
+            retry_delay=config.delivery.retry_delay,
+            max_retry_delay=config.delivery.max_retry_delay,
+            delivery_timeout=config.delivery.timeout,
+            lease_seconds=config.delivery.lease_seconds,
+            poll_interval=config.delivery.poll_interval,
+            concurrency=config.delivery.concurrency,
+            retention_seconds=config.delivery.retention_seconds,
         ),
     )
     tls_context = None
-    if config.smtp_tls_cert is not None and config.smtp_tls_key is not None:
+    if config.smtp.tls.cert_file is not None and config.smtp.tls.key_file is not None:
         tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        tls_context.load_cert_chain(config.smtp_tls_cert, config.smtp_tls_key)
+        tls_context.load_cert_chain(config.smtp.tls.cert_file, config.smtp.tls.key_file)
     listener = SmtpListener(
         handler=SubmissionHandler(
-            service=messages, max_recipients=config.max_recipients
+            service=messages, max_recipients=config.limits.max_recipients
         ),
-        host=config.smtp_host,
-        port=config.smtp_port,
-        username=config.smtp_username,
-        password=config.smtp_password.get_secret_value(),
+        host=config.smtp.host,
+        port=config.smtp.port,
+        username=config.smtp.auth.username,
+        password=config.smtp.auth.password.get_secret_value(),
         tls_context=tls_context,
-        max_message_bytes=config.max_message_bytes,
+        max_message_bytes=config.limits.max_message_bytes,
     )
 
     @asynccontextmanager
@@ -122,13 +123,13 @@ def create_app(config: GatewayConfig) -> FastAPI:
             task = asyncio.create_task(worker.run())
             yield
 
-    app = FastAPI(title="GStack SMTP Gateway", lifespan=lifespan)
+    app = FastAPI(title="SMTP Gateway", lifespan=lifespan)
     app.add_middleware(_BodyLimit, max_bytes=65536)
     app.include_router(
         create_router(
             settings=relay,
-            username=config.api_username,
-            password=config.api_password.get_secret_value(),
+            username=config.http.auth.username,
+            password=config.http.auth.password.get_secret_value(),
         )
     )
 

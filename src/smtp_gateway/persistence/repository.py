@@ -5,7 +5,7 @@ from uuid import uuid4
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gstack_smtp_gateway.shared import DeliveryState
+from smtp_gateway.shared import DeliveryState
 
 from .models import DeliveryRow, MessageRow, SmtpSettingsRow
 

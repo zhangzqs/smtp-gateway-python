@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gstack_smtp_gateway.services import MessageService
-from gstack_smtp_gateway.shared import MessageTooLargeError
+from smtp_gateway.services import MessageService
+from smtp_gateway.shared import MessageTooLargeError
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ from typing import assert_never
 
 import aiosmtplib
 
-from gstack_smtp_gateway.shared import ClaimedDelivery, TlsMode, Upstream
+from smtp_gateway.shared import ClaimedDelivery, TlsMode, Upstream
 
 
 class SmtpSender:

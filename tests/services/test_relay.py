@@ -10,9 +10,9 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from gstack_smtp_gateway.persistence import Database, RelayRepository
-from gstack_smtp_gateway.services.relay import RelayService
-from gstack_smtp_gateway.shared import DeliveryState, SmtpSettingsWrite, TlsMode
+from smtp_gateway.persistence import Database, RelayRepository
+from smtp_gateway.services.relay import RelayService
+from smtp_gateway.shared import DeliveryState, SmtpSettingsWrite, TlsMode
 
 
 @dataclass(kw_only=True)
@@ -123,12 +123,8 @@ async def test_queue_and_settings_survive_database_restart(storage: _Storage) ->
 async def test_password_and_content_are_encrypted_and_hidden(storage: _Storage) -> None:
     identifier = await _enqueue(storage.relay)
     async with storage.engine.connect() as connection:
-        password = await connection.scalar(
-            text("SELECT secret FROM gstack_smtp_settings")
-        )
-        content = await connection.scalar(
-            text("SELECT content FROM gstack_smtp_messages")
-        )
+        password = await connection.scalar(text("SELECT secret FROM smtp_settings"))
+        content = await connection.scalar(text("SELECT content FROM smtp_messages"))
     assert isinstance(password, bytes)
     assert isinstance(content, bytes)
     assert b"upstream-secret" not in password

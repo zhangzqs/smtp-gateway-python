@@ -12,16 +12,16 @@ from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from gstack_smtp_gateway.persistence import Database, RelayRepository
-from gstack_smtp_gateway.services import DeliveryWorker, RelayService, RetryPolicy
-from gstack_smtp_gateway.shared import (
+from smtp_gateway.persistence import Database, RelayRepository
+from smtp_gateway.services import DeliveryWorker, RelayService, RetryPolicy
+from smtp_gateway.shared import (
     ClaimedDelivery,
     DeliveryState,
     SmtpSettingsWrite,
     TlsMode,
     Upstream,
 )
-from gstack_smtp_gateway.smtp_client import SmtpSender
+from smtp_gateway.smtp_client import SmtpSender
 
 
 @dataclass(kw_only=True)
@@ -203,9 +203,7 @@ async def test_sender_uses_exact_tls_modes_and_verifies_certificates(
     client.login = AsyncMock()
     client.sendmail = AsyncMock(return_value=({}, "accepted"))
     constructor = Mock(return_value=client)
-    monkeypatch.setattr(
-        "gstack_smtp_gateway.smtp_client.client.aiosmtplib.SMTP", constructor
-    )
+    monkeypatch.setattr("smtp_gateway.smtp_client.client.aiosmtplib.SMTP", constructor)
     upstream = Upstream(
         host="smtp.example.com",
         port=465 if use_tls else 587,
@@ -240,7 +238,7 @@ async def test_sender_closes_connection_after_recipient_rejection(
         return_value=({"operator@example.com": (450, "try later")}, "accepted")
     )
     monkeypatch.setattr(
-        "gstack_smtp_gateway.smtp_client.client.aiosmtplib.SMTP",
+        "smtp_gateway.smtp_client.client.aiosmtplib.SMTP",
         Mock(return_value=client),
     )
     upstream = Upstream(
@@ -273,7 +271,7 @@ async def test_sender_closes_connection_when_cancelled(
     client.connect = AsyncMock()
     client.sendmail = blocked_sendmail
     monkeypatch.setattr(
-        "gstack_smtp_gateway.smtp_client.client.aiosmtplib.SMTP",
+        "smtp_gateway.smtp_client.client.aiosmtplib.SMTP",
         Mock(return_value=client),
     )
     upstream = Upstream(

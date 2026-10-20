@@ -5,8 +5,8 @@ from uuid import uuid4
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr
 
-from gstack_smtp_gateway.persistence import Database, RelayRepository
-from gstack_smtp_gateway.shared import (
+from smtp_gateway.persistence import Database, RelayRepository
+from smtp_gateway.shared import (
     ClaimedDelivery,
     DeliveryState,
     DeliveryStatus,

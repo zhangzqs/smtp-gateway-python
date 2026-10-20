@@ -1,0 +1,70 @@
+line-length = 88
+target-version = "py311"
+src = ["src"]
+
+[lint]
+preview = true
+explicit-preview-rules = true
+select = [
+    # 基础错误和无效导入
+    "E4",
+    "E7",
+    "E9",
+    "F",
+
+    "I",  # 导入排序
+    "UP", # Python 3.11 写法
+    "UP052", # contextmanager 使用 Generator 返回注解
+    "B",  # 常见易错代码
+
+    # 简化表达式和冗余代码
+    "SIM",
+    "C4",
+    "PIE",
+    "ARG",     # 未使用的参数必须显式使用下划线命名
+    "N801",    # 类名使用大驼峰
+    "PLR6301", # 实例方法必须使用 self
+    "PYI019",  # 使用 Self 代替仅用于当前类的 TypeVar
+    "PYI034",  # 返回当前实例的特殊方法使用 Self
+
+    "ASYNC", # 异步代码
+    "FAST",  # FastAPI
+    "PT",    # pytest
+
+    # 日志使用和格式
+    "LOG",
+    "G",
+
+    "T20",    # 禁止遗留 print
+    "TID252", # 禁止进入父包的相对导入
+    "RUF100", # 无效的 noqa
+    "PGH004", # noqa 必须指定规则
+    "ANN",    # 函数类型注解
+    "S",      # 常见安全风险
+    "DTZ",    # 时间对象的时区
+    "PTH",    # 使用 pathlib
+
+    # 私有成员和模块导出
+    "PLE0604",
+    "PLE0605",
+    "PLC2701",
+    "RUF008", # dataclass 不使用可变默认值
+    "RUF009", # dataclass 默认值不直接调用函数
+    "RUF012", # 可变类属性显式声明为 ClassVar
+    "RUF022", # 排序 __all__
+    "RUF045", # dataclass 类变量显式声明为 ClassVar
+    "RUF049", # Enum 不与 dataclass 混用
+    "RUF067", # __init__.py 只保留包接口声明
+    "RUF068", # 禁止 __all__ 重复项
+    "SLF001",
+]
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[lint.per-file-ignores]
+"**/tests/**" = ["S101"] # pytest 使用 assert 断言
+
+[format]
+quote-style = "double" # 使用双引号字符串
+indent-style = "space" # 使用空格缩进

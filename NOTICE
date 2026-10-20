@@ -1,0 +1,7 @@
+SMTP gateway Python
+
+The SMTP gateway implementation was extracted from qbox/gstack:
+https://github.com/qbox/gstack/tree/0c0d1dde2d8c7a7b743e1b02ae6d12b9edc1e2f6/plugins/packages/gstack-smtp-gateway
+
+The extracted implementation is distributed under the Apache License, Version 2.0.
+Its source history is retained in this repository.

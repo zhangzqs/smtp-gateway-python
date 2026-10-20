@@ -1,6 +1,7 @@
 """HTTP API 只管理 SMTP 配置，并保护认证和持久化错误边界。"""
 
 import asyncio
+import os
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -8,31 +9,39 @@ from unittest.mock import AsyncMock
 import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 from sqlalchemy.exc import OperationalError
 
-from gstack_smtp_gateway import GatewayConfig, create_app
-from gstack_smtp_gateway.services import DeliveryWorker, RelayService
+from smtp_gateway import GatewayConfig, create_app
+from smtp_gateway.services import DeliveryWorker, RelayService
 
 _AUTH = ("manager", "test-management-credential")
 
 
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient]:
+    for name in tuple(os.environ):
+        if name.startswith("SMTP_GATEWAY_"):
+            monkeypatch.delenv(name)
+
     async def idle(_self: DeliveryWorker) -> None:
         await asyncio.Event().wait()
 
     monkeypatch.setattr(DeliveryWorker, "run", idle)
-    monkeypatch.setattr("gstack_smtp_gateway.app.SmtpListener.start", AsyncMock())
-    monkeypatch.setattr("gstack_smtp_gateway.app.SmtpListener.close", AsyncMock())
-    config = GatewayConfig(
-        database_url=SecretStr(f"sqlite+aiosqlite:///{tmp_path / 'gateway.db'}"),
-        encryption_key=SecretStr(Fernet.generate_key().decode()),
-        api_username=_AUTH[0],
-        api_password=SecretStr(_AUTH[1]),
-        smtp_password=SecretStr("test-submission-credential"),
-        smtp_allow_insecure_auth=True,
-        max_message_bytes=1024,
+    monkeypatch.setattr("smtp_gateway.app.SmtpListener.start", AsyncMock())
+    monkeypatch.setattr("smtp_gateway.app.SmtpListener.close", AsyncMock())
+    config = GatewayConfig.model_validate(
+        {
+            "database": {
+                "url": f"sqlite+aiosqlite:///{tmp_path / 'gateway.db'}",
+                "encryption_key": Fernet.generate_key().decode(),
+            },
+            "http": {"auth": {"username": _AUTH[0], "password": _AUTH[1]}},
+            "smtp": {
+                "auth": {"password": "test-submission-credential"},
+                "allow_insecure_auth": True,
+            },
+            "limits": {"max_message_bytes": 1024},
+        }
     )
     with TestClient(create_app(config)) as result:
         yield result

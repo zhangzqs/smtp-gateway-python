@@ -6,7 +6,7 @@ from typing import Annotated, Protocol
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from gstack_smtp_gateway.shared import SmtpSettings, SmtpSettingsWrite
+from smtp_gateway.shared import SmtpSettings, SmtpSettingsWrite
 
 
 class _Settings(Protocol):
