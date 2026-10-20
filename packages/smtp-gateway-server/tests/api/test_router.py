@@ -1,8 +1,9 @@
-"""HTTP API 只管理 SMTP 配置，并保护认证和持久化错误边界。"""
+"""HTTP API 管理配置与投递记录，保护认证和持久化错误边界。"""
 
 import asyncio
 import os
 from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,12 @@ from sqlalchemy.exc import OperationalError
 
 from smtp_gateway import GatewayConfig, create_app
 from smtp_gateway.services import DeliveryWorker, RelayService
+from smtp_gateway_client import (
+    DeliveryState,
+    DeliveryStatus,
+    MessagePage,
+    MessageRecord,
+)
 
 _AUTH = ("manager", "test-management-credential")
 
@@ -47,10 +54,13 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
         yield result
 
 
-@pytest.mark.parametrize("method", ["GET", "PUT"])
-def test_basic_auth_is_required(client: TestClient, method: str) -> None:
-    assert client.request(method, "/v1/smtp").status_code == 401
-    invalid = client.request(method, "/v1/smtp", auth=("invalid", "credential"))
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("GET", "/v1/smtp"), ("PUT", "/v1/smtp"), ("GET", "/v1/messages")],
+)
+def test_basic_auth_is_required(client: TestClient, method: str, path: str) -> None:
+    assert client.request(method, path).status_code == 401
+    invalid = client.request(method, path, auth=("invalid", "credential"))
     assert invalid.status_code == 401
     assert invalid.headers["www-authenticate"] == "Basic"
     assert client.get("/healthz").status_code == 200
@@ -78,20 +88,92 @@ def test_smtp_settings_hide_secrets_and_validate_password_changes(
     assert client.get("/v1/smtp", auth=_AUTH).json()["username"] == "sender"
 
 
-def test_message_submission_and_status_are_not_http_endpoints(
+def test_http_does_not_submit_messages_or_return_raw_content(
     client: TestClient,
 ) -> None:
-    assert client.post("/v1/messages", auth=_AUTH, json={}).status_code == 404
+    assert client.post("/v1/messages", auth=_AUTH, json={}).status_code == 405
     assert client.get("/v1/messages/unknown", auth=_AUTH).status_code == 404
 
 
-def test_openapi_contains_only_configuration_and_health(client: TestClient) -> None:
+def test_openapi_exposes_configuration_read_only_records_and_health(
+    client: TestClient,
+) -> None:
     document = client.get("/openapi.json").json()
-    assert set(document["paths"]) == {"/healthz", "/v1/smtp"}
+    assert set(document["paths"]) == {"/healthz", "/v1/smtp", "/v1/messages"}
     assert set(document["paths"]["/v1/smtp"]) == {"get", "put"}
-    assert not any(
-        name.startswith("Message") for name in document["components"]["schemas"]
+    assert set(document["paths"]["/v1/messages"]) == {"get"}
+
+
+def test_empty_message_page(client: TestClient) -> None:
+    response = client.get("/v1/messages", auth=_AUTH)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"items": [], "total": 0, "page": 1, "page_size": 20}
+
+
+def test_message_page_passes_pagination_and_returns_recipient_results(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = AsyncMock(
+        return_value=MessagePage(
+            items=[
+                MessageRecord(
+                    id="message-id",
+                    sender="sender@example.com",
+                    created_at=datetime(2026, 10, 20, 8, tzinfo=UTC),
+                    deliveries=[
+                        DeliveryStatus(
+                            recipient="receiver@example.com",
+                            state=DeliveryState.PENDING,
+                            attempts=1,
+                            last_error="SMTPRecipientRefused",
+                        )
+                    ],
+                )
+            ],
+            total=11,
+            page=2,
+            page_size=10,
+        )
     )
+    monkeypatch.setattr(RelayService, "list_messages", records)
+    response = client.get("/v1/messages?page=2&page_size=10", auth=_AUTH)
+    assert response.status_code == 200
+    records.assert_awaited_once_with(page=2, page_size=10)
+    item = response.json()["items"][0]
+    assert set(item) == {"id", "sender", "created_at", "deliveries"}
+    assert item["created_at"] == "2026-10-20T08:00:00Z"
+    assert item["deliveries"] == [
+        {
+            "recipient": "receiver@example.com",
+            "state": "pending",
+            "attempts": 1,
+            "last_error": "SMTPRecipientRefused",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["page=0", "page=-1", "page=invalid", "page_size=0", "page_size=101"],
+)
+def test_message_page_rejects_invalid_pagination(
+    client: TestClient, query: str
+) -> None:
+    assert client.get(f"/v1/messages?{query}", auth=_AUTH).status_code == 422
+
+
+def test_failed_record_storage_returns_unavailable_without_internal_errors(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        RelayService,
+        "list_messages",
+        AsyncMock(side_effect=OperationalError("select", {}, RuntimeError("private"))),
+    )
+    response = client.get("/v1/messages", auth=_AUTH)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Gateway storage is unavailable"}
 
 
 def test_failed_settings_storage_returns_unavailable_without_secrets(

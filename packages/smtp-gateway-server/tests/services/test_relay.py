@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -114,7 +115,9 @@ async def test_queue_and_settings_survive_database_restart(storage: _Storage) ->
         delivery = await restored.claim(max_attempts=3, lease_seconds=10)
         assert delivery is not None
         assert delivery.message_id == identifier
-        assert delivery.recipient == "operator@example.com"
+        assert [item.recipient for item in delivery.recipients] == [
+            "operator@example.com"
+        ]
         assert delivery.content.endswith(b"private notification body\r\n")
     finally:
         await restored.close()
@@ -167,7 +170,9 @@ async def test_wrong_encryption_key_fails_during_startup(
 async def test_concurrent_claims_across_database_instances_have_one_owner(
     storage: _Storage,
 ) -> None:
-    identifier = await _enqueue(storage.relay)
+    identifier = await _enqueue(
+        storage.relay, ["first@example.com", "second@example.com"]
+    )
     other = RelayService(
         database=Database(engine=create_async_engine(storage.url)),
         encryption_key=storage.key,
@@ -181,40 +186,57 @@ async def test_concurrent_claims_across_database_instances_have_one_owner(
         winners = [claim for claim in claims if claim is not None]
         assert len(winners) == 1
         assert winners[0].message_id == identifier
+        assert {item.recipient for item in winners[0].recipients} == {
+            "first@example.com",
+            "second@example.com",
+        }
         status = await storage.relay.status(identifier)
         assert status is not None
-        assert status.deliveries[0].attempts == 1
+        assert len(status.deliveries) == 2
+        assert all(item.attempts == 1 for item in status.deliveries)
     finally:
         await other.close()
 
 
 @pytest.mark.asyncio
 async def test_expired_claim_recovers_and_fences_old_owner(storage: _Storage) -> None:
-    identifier = await _enqueue(storage.relay)
+    identifier = await _enqueue(
+        storage.relay, ["first@example.com", "second@example.com"]
+    )
     first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
     assert await storage.relay.claim(max_attempts=3, lease_seconds=10) is None
     storage.clock[0] += 10
     second = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert second is not None
-    assert second.id == first.id
+    assert {item.id for item in second.recipients} == {
+        item.id for item in first.recipients
+    }
     assert second.token != first.token
-    assert second.attempts == 2
+    assert all(item.attempts == 2 for item in second.recipients)
 
-    await storage.relay.finish(first, error=None, max_attempts=3, retry_delay=0)
-    status = await storage.relay.status(identifier)
-    assert status is not None
-    assert status.deliveries[0].state == DeliveryState.SENDING
-    assert status.deliveries[0].attempts == 2
-
-    await storage.relay.finish(second, error=None, max_attempts=3, retry_delay=0)
     await storage.relay.finish(
-        first, error="stale failure", max_attempts=3, retry_delay=0
+        first, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
     )
     status = await storage.relay.status(identifier)
     assert status is not None
-    assert status.deliveries[0].state == DeliveryState.DELIVERED
-    assert status.deliveries[0].last_error is None
+    assert all(item.state == DeliveryState.SENDING for item in status.deliveries)
+    assert all(item.attempts == 2 for item in status.deliveries)
+
+    await storage.relay.finish(
+        second, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
+    )
+    await storage.relay.finish(
+        first,
+        errors={item.recipient: "stale failure" for item in first.recipients},
+        max_attempts=3,
+        retry_delay=0,
+        max_retry_delay=0,
+    )
+    status = await storage.relay.status(identifier)
+    assert status is not None
+    assert all(item.state == DeliveryState.DELIVERED for item in status.deliveries)
+    assert all(item.last_error is None for item in status.deliveries)
 
 
 @pytest.mark.asyncio
@@ -244,7 +266,11 @@ async def test_lowering_attempt_limit_terminates_already_exhausted_pending_deliv
     first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
     await storage.relay.finish(
-        first, error="SMTPException", max_attempts=3, retry_delay=100
+        first,
+        errors={"operator@example.com": "SMTPException"},
+        max_attempts=3,
+        retry_delay=100,
+        max_retry_delay=100,
     )
     assert await storage.relay.claim(max_attempts=1, lease_seconds=10) is None
     status = await storage.relay.status(identifier)
@@ -264,22 +290,125 @@ async def test_successful_recipients_are_not_reclaimed(storage: _Storage) -> Non
     )
     first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
-    await storage.relay.finish(first, error=None, max_attempts=3, retry_delay=0)
-    second = await storage.relay.claim(max_attempts=3, lease_seconds=10)
-    assert second is not None
-    assert second.recipient != first.recipient
+    assert {item.recipient for item in first.recipients} == {
+        "first@example.com",
+        "second@example.com",
+    }
+    assert len(first.recipients) == 2
     await storage.relay.finish(
-        second, error="SMTPException", max_attempts=3, retry_delay=5
+        first,
+        errors={"second@example.com": "SMTPException"},
+        max_attempts=3,
+        retry_delay=5,
+        max_retry_delay=5,
     )
     assert await storage.relay.claim(max_attempts=3, lease_seconds=10) is None
     storage.clock[0] += 5
     retry = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert retry is not None
-    assert retry.recipient == second.recipient
-    assert retry.attempts == 2
+    assert len(retry.recipients) == 1
+    assert retry.recipients[0].recipient == "second@example.com"
+    assert retry.recipients[0].attempts == 2
     status = await storage.relay.status(identifier)
     assert status is not None
     assert len(status.deliveries) == 2
+
+
+@pytest.mark.asyncio
+async def test_active_batch_blocks_newly_due_recipients_but_not_other_messages(
+    storage: _Storage,
+) -> None:
+    identifier = await _enqueue(
+        storage.relay, ["first@example.com", "later@example.com"]
+    )
+    async with storage.engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE smtp_deliveries SET next_attempt_at = 1010 "
+                "WHERE message_id = :identifier AND recipient = :recipient"
+            ),
+            {"identifier": identifier, "recipient": "later@example.com"},
+        )
+    first = await storage.relay.claim(max_attempts=3, lease_seconds=30)
+    assert first is not None
+    assert [item.recipient for item in first.recipients] == ["first@example.com"]
+
+    storage.clock[0] = 1011
+    other_identifier = await _enqueue(storage.relay, ["other@example.com"])
+    other = await storage.relay.claim(max_attempts=3, lease_seconds=30)
+    assert other is not None
+    assert other.message_id == other_identifier
+    assert await storage.relay.claim(max_attempts=3, lease_seconds=30) is None
+
+    await storage.relay.finish(
+        first, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
+    )
+    later = await storage.relay.claim(max_attempts=3, lease_seconds=30)
+    assert later is not None
+    assert later.message_id == identifier
+    assert [item.recipient for item in later.recipients] == ["later@example.com"]
+    assert later.recipients[0].attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_uses_each_recipients_attempt_limit_and_retry_delay(
+    storage: _Storage,
+) -> None:
+    identifier = await _enqueue(
+        storage.relay,
+        ["retry@example.com", "exhausted@example.com", "success@example.com"],
+    )
+    async with storage.engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE smtp_deliveries SET attempts = :attempts "
+                "WHERE message_id = :identifier AND recipient = :recipient"
+            ),
+            [
+                {
+                    "identifier": identifier,
+                    "recipient": "retry@example.com",
+                    "attempts": 1,
+                },
+                {
+                    "identifier": identifier,
+                    "recipient": "exhausted@example.com",
+                    "attempts": 2,
+                },
+            ],
+        )
+    batch = await storage.relay.claim(max_attempts=3, lease_seconds=10)
+    assert batch is not None
+    assert {item.recipient: item.attempts for item in batch.recipients} == {
+        "retry@example.com": 2,
+        "exhausted@example.com": 3,
+        "success@example.com": 1,
+    }
+    await storage.relay.finish(
+        batch,
+        errors={
+            "retry@example.com": "SMTPRecipientRefused:450",
+            "exhausted@example.com": "SMTPRecipientRefused:450",
+        },
+        max_attempts=3,
+        retry_delay=10,
+        max_retry_delay=15,
+    )
+    status = await storage.relay.status(identifier)
+    assert status is not None
+    assert {item.recipient: item.state for item in status.deliveries} == {
+        "retry@example.com": DeliveryState.PENDING,
+        "exhausted@example.com": DeliveryState.FAILED,
+        "success@example.com": DeliveryState.DELIVERED,
+    }
+    storage.clock[0] += 14
+    assert await storage.relay.claim(max_attempts=3, lease_seconds=10) is None
+    storage.clock[0] += 1
+    retry = await storage.relay.claim(max_attempts=3, lease_seconds=10)
+    assert retry is not None
+    assert len(retry.recipients) == 1
+    assert retry.recipients[0].recipient == "retry@example.com"
+    assert retry.recipients[0].attempts == 3
 
 
 @pytest.mark.asyncio
@@ -294,10 +423,18 @@ async def test_retention_preserves_pending_and_active_messages(
     ]
     by_message = {claim.message_id: claim for claim in claims if claim is not None}
     await storage.relay.finish(
-        by_message[pending], error="SMTPException", max_attempts=3, retry_delay=100
+        by_message[pending],
+        errors={"operator@example.com": "SMTPException"},
+        max_attempts=3,
+        retry_delay=100,
+        max_retry_delay=100,
     )
     await storage.relay.finish(
-        by_message[finished], error=None, max_attempts=3, retry_delay=0
+        by_message[finished],
+        errors={},
+        max_attempts=3,
+        retry_delay=0,
+        max_retry_delay=0,
     )
     storage.clock[0] += 20
     await storage.relay.prune(retention_seconds=10)
@@ -313,15 +450,94 @@ async def test_retention_waits_for_every_recipient_to_finish(storage: _Storage) 
     )
     first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
-    await storage.relay.finish(first, error=None, max_attempts=3, retry_delay=0)
+    await storage.relay.finish(
+        first,
+        errors={"second@example.com": "SMTPException"},
+        max_attempts=3,
+        retry_delay=0,
+        max_retry_delay=0,
+    )
     storage.clock[0] += 20
     await storage.relay.prune(retention_seconds=10)
     assert await storage.relay.status(identifier) is not None
     second = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert second is not None
-    await storage.relay.finish(second, error=None, max_attempts=3, retry_delay=0)
+    assert [item.recipient for item in second.recipients] == ["second@example.com"]
+    await storage.relay.finish(
+        second, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
+    )
     await storage.relay.prune(retention_seconds=10)
     assert await storage.relay.status(identifier) is not None
     storage.clock[0] += 11
     await storage.relay.prune(retention_seconds=10)
     assert await storage.relay.status(identifier) is None
+
+
+@pytest.mark.asyncio
+async def test_message_pages_have_stable_order_and_nested_deliveries(
+    storage: _Storage,
+) -> None:
+    identifiers = [
+        await _enqueue(storage.relay, [f"receiver-{index}@example.com"])
+        for index in range(4)
+    ]
+    storage.clock[0] += 1
+    newest = await _enqueue(
+        storage.relay, ["second@example.com", "first@example.com", "first@example.com"]
+    )
+    pages = [
+        await storage.relay.list_messages(page=index, page_size=2)
+        for index in range(1, 5)
+    ]
+    assert [record.id for page in pages for record in page.items] == [
+        newest,
+        *sorted(identifiers, reverse=True),
+    ]
+    assert [len(page.items) for page in pages] == [2, 2, 1, 0]
+    assert all(page.total == 5 and page.page_size == 2 for page in pages)
+    record = pages[0].items[0]
+    assert record.sender == "grafana@example.com"
+    assert record.created_at == datetime.fromtimestamp(storage.clock[0], UTC)
+    assert [item.recipient for item in record.deliveries] == [
+        "first@example.com",
+        "second@example.com",
+    ]
+    assert all(item.state == DeliveryState.PENDING for item in record.deliveries)
+    assert all(item.attempts == 0 for item in record.deliveries)
+
+
+@pytest.mark.asyncio
+async def test_message_records_show_partial_results_without_loading_content(
+    storage: _Storage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identifier = await _enqueue(
+        storage.relay, ["first@example.com", "second@example.com"]
+    )
+    batch = await storage.relay.claim(max_attempts=3, lease_seconds=10)
+    assert batch is not None
+    await storage.relay.finish(
+        batch,
+        errors={"second@example.com": "SMTPRecipientRefused"},
+        max_attempts=3,
+        retry_delay=5,
+        max_retry_delay=10,
+    )
+
+    def reject_decryption(_value: bytes) -> bytes:
+        raise AssertionError("Listing messages must not decrypt stored data")
+
+    monkeypatch.setattr(storage.relay, "_decrypt", reject_decryption)
+    records = await storage.relay.list_messages()
+    assert records.items[0].id == identifier
+    statuses = {item.recipient: item for item in records.items[0].deliveries}
+    assert statuses["first@example.com"].state == DeliveryState.DELIVERED
+    assert statuses["first@example.com"].last_error is None
+    assert statuses["second@example.com"].state == DeliveryState.PENDING
+    assert statuses["second@example.com"].last_error == "SMTPRecipientRefused"
+    assert all(item.attempts == 1 for item in statuses.values())
+    response = records.model_dump_json()
+    assert "private notification body" not in response
+    assert "upstream-secret" not in response
+    assert "content" not in response
+    assert batch.token not in response
+    assert all(item.id not in response for item in batch.recipients)

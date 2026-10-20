@@ -1,5 +1,6 @@
-"""SMTP 网关配置接口的请求与安全响应。"""
+"""SMTP 网关配置与投递记录接口的请求及安全响应。"""
 
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
@@ -11,13 +12,17 @@ class TlsMode(StrEnum):
     IMPLICIT = "implicit"
 
 
-class SmtpSettings(BaseModel):
-    """过滤响应中的额外字段，保留调用方需要的设置状态。"""
+class _ResponseModel(BaseModel):
+    """共享响应模型的字段过滤与错误脱敏约定。"""
 
     model_config = ConfigDict(
         extra="ignore",
         hide_input_in_errors=True,
     )
+
+
+class SmtpSettings(_ResponseModel):
+    """过滤响应中的额外字段，保留调用方需要的设置状态。"""
 
     configured: bool
     host: str = ""
@@ -63,4 +68,54 @@ class SmtpSettingsWrite(BaseModel):
         return value
 
 
-__all__ = ["SmtpSettings", "SmtpSettingsWrite", "TlsMode"]
+class DeliveryState(StrEnum):
+    PENDING = "pending"
+    SENDING = "sending"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+
+
+class DeliveryStatus(_ResponseModel):
+    """单个收件人的投递状态，不包含邮件正文。"""
+
+    recipient: str
+    state: DeliveryState
+    attempts: int
+    last_error: str | None
+
+
+class MessageRecord(_ResponseModel):
+    """邮件信封及收件人状态，时间统一为 UTC。"""
+
+    id: str
+    sender: str
+    created_at: datetime
+    deliveries: list[DeliveryStatus]
+
+    @field_validator("created_at")
+    @classmethod
+    def normalize_created_at(cls, value: datetime) -> datetime:
+        """拒绝无时区时间，并将带时区时间转换为 UTC。"""
+        if value.utcoffset() is None:
+            raise ValueError("Message timestamp must include a time zone")
+        return value.astimezone(UTC)
+
+
+class MessagePage(_ResponseModel):
+    """分页返回邮件投递记录。"""
+
+    items: list[MessageRecord]
+    total: int = Field(ge=0)
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
+
+
+__all__ = [
+    "DeliveryState",
+    "DeliveryStatus",
+    "MessagePage",
+    "MessageRecord",
+    "SmtpSettings",
+    "SmtpSettingsWrite",
+    "TlsMode",
+]

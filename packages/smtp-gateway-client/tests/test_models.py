@@ -1,9 +1,18 @@
 """共享模型校验 SMTP 接口边界并隐藏敏感字段。"""
 
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from smtp_gateway_client import SmtpSettings, SmtpSettingsWrite, TlsMode
+from smtp_gateway_client import (
+    DeliveryState,
+    MessagePage,
+    MessageRecord,
+    SmtpSettings,
+    SmtpSettingsWrite,
+    TlsMode,
+)
 
 
 @pytest.mark.parametrize("mode", ["none", "starttls", "implicit"])
@@ -74,3 +83,66 @@ def test_response_filters_secret_fields_and_keeps_setting_defaults() -> None:
     assert response.host == ""
     assert "password" not in response.model_dump()
     assert "private-response-credential" not in repr(response)
+
+
+def test_message_record_normalizes_time_and_filters_nonpublic_fields() -> None:
+    response = MessageRecord.model_validate(
+        {
+            "id": "message-id",
+            "sender": "sender@example.com",
+            "created_at": "2026-10-20T12:30:00+08:00",
+            "content": "private-email-body",
+            "password": "private-response-credential",
+            "deliveries": [
+                {
+                    "recipient": "recipient@example.com",
+                    "state": "delivered",
+                    "attempts": 2,
+                    "last_error": None,
+                    "claim_token": "private-claim-token",
+                }
+            ],
+        }
+    )
+    assert response.created_at == datetime(2026, 10, 20, 4, 30, tzinfo=UTC)
+    assert response.model_dump(mode="json")["created_at"] == "2026-10-20T04:30:00Z"
+    assert response.deliveries[0].state == DeliveryState.DELIVERED
+    assert response.deliveries[0].attempts == 2
+    assert "private-email-body" not in response.model_dump_json()
+    assert "private-response-credential" not in response.model_dump_json()
+    assert "private-claim-token" not in response.model_dump_json()
+
+
+@pytest.mark.parametrize("timestamp", ["2026-10-20T12:30:00", "not-a-time"])
+def test_message_record_rejects_timestamps_without_a_valid_time_zone(
+    timestamp: str,
+) -> None:
+    with pytest.raises(ValidationError, match="created_at"):
+        MessageRecord.model_validate(
+            {
+                "id": "message-id",
+                "sender": "sender@example.com",
+                "created_at": timestamp,
+                "deliveries": [],
+            }
+        )
+
+
+def test_message_page_defaults_to_twenty_items_on_first_page() -> None:
+    response = MessagePage(items=[], total=0)
+    assert response.page == 1
+    assert response.page_size == 20
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"page": 0},
+        {"page_size": 0},
+        {"page_size": 101},
+        {"total": -1},
+    ],
+)
+def test_message_page_rejects_invalid_pagination(values: dict[str, int]) -> None:
+    with pytest.raises(ValidationError):
+        MessagePage.model_validate({"items": [], "total": 0, **values})

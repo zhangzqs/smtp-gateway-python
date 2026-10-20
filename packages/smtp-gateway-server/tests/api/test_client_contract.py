@@ -74,6 +74,11 @@ async def test_client_manages_settings_through_server_api(
             )
             assert preserved.has_password
             assert (await sdk.get()).port == 465
+            records = await sdk.list_messages(page=2, page_size=5)
+            assert records.items == []
+            assert records.total == 0
+            assert records.page == 2
+            assert records.page_size == 5
         finally:
             await sdk.close()
 
@@ -87,6 +92,9 @@ async def test_client_manages_settings_through_server_api(
         try:
             with pytest.raises(SmtpGatewayAPIError) as error:
                 await invalid.get()
+            assert error.value.status_code == 401
+            with pytest.raises(SmtpGatewayAPIError) as error:
+                await invalid.list_messages()
             assert error.value.status_code == 401
         finally:
             await invalid.close()

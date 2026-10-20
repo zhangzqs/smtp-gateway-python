@@ -1,11 +1,10 @@
-"""按收件人投递时由持久层与服务层共享的类型。"""
+"""批量投递与收件人状态管理共用的类型。"""
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 
 from pydantic import BaseModel, SecretStr
 
-from smtp_gateway_client import TlsMode
+from smtp_gateway_client import DeliveryState, DeliveryStatus, TlsMode
 
 
 class NotConfiguredError(Exception):
@@ -14,20 +13,6 @@ class NotConfiguredError(Exception):
 
 class MessageTooLargeError(ValueError):
     """接收的邮件超过允许字节数。"""
-
-
-class DeliveryState(StrEnum):
-    PENDING = "pending"
-    SENDING = "sending"
-    DELIVERED = "delivered"
-    FAILED = "failed"
-
-
-class DeliveryStatus(BaseModel):
-    recipient: str
-    state: DeliveryState
-    attempts: int
-    last_error: str | None
 
 
 class MessageStatus(BaseModel):
@@ -45,18 +30,24 @@ class Upstream:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ClaimedDelivery:
+class ClaimedRecipient:
     id: str
+    recipient: str
+    attempts: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ClaimedDelivery:
     message_id: str
     token: str
     sender: str
-    recipient: str
+    recipients: tuple[ClaimedRecipient, ...]
     content: bytes = field(repr=False)
-    attempts: int
 
 
 __all__ = [
     "ClaimedDelivery",
+    "ClaimedRecipient",
     "DeliveryState",
     "DeliveryStatus",
     "MessageStatus",

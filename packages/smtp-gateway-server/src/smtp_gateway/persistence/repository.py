@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased, load_only
 
 from smtp_gateway.shared import DeliveryState
 
@@ -103,6 +104,42 @@ class RelayRepository:
         )
         return list(rows)
 
+    async def message_count(self) -> int:
+        """统计保留期内的邮件总数。"""
+        result = await self._session.execute(
+            select(func.count()).select_from(MessageRow)
+        )
+        return result.scalar_one()
+
+    async def message_page(self, *, offset: int, limit: int) -> list[MessageRow]:
+        """按创建时间倒序读取邮件元信息，不加载正文。"""
+        rows = await self._session.scalars(
+            select(MessageRow)
+            .options(
+                load_only(
+                    MessageRow.id,
+                    MessageRow.sender,
+                    MessageRow.created_at,
+                    raiseload=True,
+                )
+            )
+            .order_by(MessageRow.created_at.desc(), MessageRow.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(rows)
+
+    async def deliveries_for_messages(
+        self, identifiers: list[str]
+    ) -> list[DeliveryRow]:
+        """批量读取当前页邮件的收件人，避免逐封查询。"""
+        rows = await self._session.scalars(
+            select(DeliveryRow)
+            .where(DeliveryRow.message_id.in_(identifiers))
+            .order_by(DeliveryRow.message_id, DeliveryRow.recipient, DeliveryRow.id)
+        )
+        return list(rows)
+
     async def fail_exhausted(self, *, now: float, max_attempts: int) -> None:
         """终结已用尽次数的待处理或租约过期行。"""
         expired = and_(
@@ -131,8 +168,8 @@ class RelayRepository:
         max_attempts: int,
         token: str,
         lease_until: float,
-    ) -> DeliveryRow | None:
-        """查询候选行，并在 CAS 更新中再次确认其资格。"""
+    ) -> list[DeliveryRow]:
+        """锁定一封邮件，原子认领其所有到期且未被租用的收件人。"""
         eligible = and_(
             DeliveryRow.attempts < max_attempts,
             or_(
@@ -146,17 +183,46 @@ class RelayRepository:
                 ),
             ),
         )
+        active = aliased(DeliveryRow)
+        busy = (
+            select(active.id)
+            .where(
+                active.message_id == DeliveryRow.message_id,
+                active.state == DeliveryState.SENDING,
+                active.lease_until > now,
+            )
+            .correlate(DeliveryRow)
+            .exists()
+        )
         identifier = await self._session.scalar(
-            select(DeliveryRow.id)
-            .where(eligible)
+            select(DeliveryRow.message_id)
+            .where(eligible, ~busy)
             .order_by(DeliveryRow.next_attempt_at, DeliveryRow.id)
             .limit(1)
         )
         if identifier is None:
-            return None
-        return await self._session.scalar(
+            return []
+        # 复用邮件行串行认领；下一条语句会重新检查等待期间发生的租约变更。
+        await self._session.execute(
+            update(MessageRow)
+            .where(MessageRow.id == identifier)
+            .values(id=MessageRow.id)
+        )
+        if await self._session.scalar(
+            select(
+                select(DeliveryRow.id)
+                .where(
+                    DeliveryRow.message_id == identifier,
+                    DeliveryRow.state == DeliveryState.SENDING,
+                    DeliveryRow.lease_until > now,
+                )
+                .exists()
+            )
+        ):
+            return []
+        rows = await self._session.scalars(
             update(DeliveryRow)
-            .where(DeliveryRow.id == identifier, eligible)
+            .where(DeliveryRow.message_id == identifier, eligible)
             .values(
                 state=DeliveryState.SENDING,
                 attempts=DeliveryRow.attempts + 1,
@@ -165,6 +231,7 @@ class RelayRepository:
             )
             .returning(DeliveryRow)
         )
+        return list(rows)
 
     async def finish(
         self,
