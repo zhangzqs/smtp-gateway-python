@@ -28,7 +28,7 @@ class MessageRow(GatewayBase):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     sender: Mapped[str] = mapped_column(String(320))
-    subject: Mapped[bytes | None] = mapped_column(LargeBinary)
+    subject: Mapped[bytes] = mapped_column(LargeBinary)
     content: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[float] = mapped_column(Float)
 

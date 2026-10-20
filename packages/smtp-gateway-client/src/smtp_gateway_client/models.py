@@ -89,7 +89,7 @@ class MessageRecord(_ResponseModel):
 
     id: str
     sender: str
-    subject: str = ""
+    subject: str
     created_at: datetime
     deliveries: list[DeliveryStatus]
 

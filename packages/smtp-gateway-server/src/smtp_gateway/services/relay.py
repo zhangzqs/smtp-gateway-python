@@ -44,21 +44,6 @@ class RelayService:
             sample = await repository.sample_content()
             if sample is not None:
                 self._decrypt(sample)
-        await self._backfill_subjects()
-
-    async def _backfill_subjects(self) -> None:
-        while True:
-            async with self._database.session() as session, session.begin():
-                repository = RelayRepository(session)
-                messages = await repository.messages_without_subject(limit=10)
-                if not messages:
-                    return
-                for message in messages:
-                    subject = parse_subject(self._decrypt(message.content))
-                    await repository.set_subject(
-                        identifier=message.id,
-                        subject=self._cipher.encrypt(subject.encode()),
-                    )
 
     async def close(self) -> None:
         """关闭持久层资源。"""
@@ -208,9 +193,7 @@ class RelayService:
                     MessageRecord(
                         id=message.id,
                         sender=message.sender,
-                        subject=self._decrypt(message.subject).decode()
-                        if message.subject is not None
-                        else "",
+                        subject=self._decrypt(message.subject).decode(),
                         created_at=datetime.fromtimestamp(message.created_at, UTC),
                         deliveries=deliveries[message.id],
                     )

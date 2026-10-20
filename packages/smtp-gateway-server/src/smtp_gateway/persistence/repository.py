@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, load_only
 
@@ -103,27 +103,6 @@ class RelayRepository:
     async def message(self, identifier: str) -> MessageRow | None:
         """按标识读取密文邮件。"""
         return await self._session.get(MessageRow, identifier)
-
-    async def messages_without_subject(self, *, limit: int) -> list[MessageRow]:
-        """锁定并分批读取尚未提取主题的邮件。"""
-        if self._session.get_bind().dialect.name == "sqlite":
-            await self._session.execute(text("BEGIN IMMEDIATE"))
-        rows = await self._session.scalars(
-            select(MessageRow)
-            .where(MessageRow.subject.is_(None))
-            .order_by(MessageRow.id)
-            .limit(limit)
-            .with_for_update()
-        )
-        return list(rows)
-
-    async def set_subject(self, *, identifier: str, subject: bytes) -> None:
-        """仅补齐缺失的主题，避免覆盖其它实例的提取结果。"""
-        await self._session.execute(
-            update(MessageRow)
-            .where(MessageRow.id == identifier, MessageRow.subject.is_(None))
-            .values(subject=subject)
-        )
 
     async def deliveries(self, identifier: str) -> list[DeliveryRow]:
         """读取一封邮件的所有收件人投递状态。"""

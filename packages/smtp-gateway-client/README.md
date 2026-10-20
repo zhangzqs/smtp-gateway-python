@@ -52,7 +52,7 @@ Auth，通过 HTTPS 或受信任内网访问。客户端固定使用 15 秒超�
 
 `list_messages(page=1, page_size=20)` 调用 `GET /v1/messages`，返回 `MessagePage`：
 
-- `items`：本页的 `MessageRecord`，包含邮件 `id`、信封发件人 `sender`、解码主题 `subject`、UTC 创建时间 `created_at` 和收件人投递列表 `deliveries`。旧版本响应缺少 `subject` 时默认为空字符串。
+- `items`：本页的 `MessageRecord`，包含邮件 `id`、信封发件人 `sender`、解码主题 `subject`、UTC 创建时间 `created_at` 和收件人投递列表 `deliveries`。`subject` 为必填字段，无主题邮件使用空字符串。
 - `total`、`page`、`page_size`：记录总数、当前页和每页条数。页码从 1 开始，每页默认 20 条，最多 100 条。
 - 每个 `DeliveryStatus` 包含 `recipient`、`state`、`attempts` 和 `last_error`。状态 `DeliveryState` 为 `pending`、`sending`、`delivered` 或 `failed`，错误仅为安全类别。
 

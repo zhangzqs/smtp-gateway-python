@@ -220,8 +220,10 @@ async def test_close_releases_the_injected_transport() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("options", [{}, {"page": 3, "page_size": 100}])
+@pytest.mark.parametrize("subject", ["", "告警测试"])
 async def test_list_messages_uses_basic_auth_and_pagination_query(
     options: dict[str, int],
+    subject: str,
 ) -> None:
     requests: list[httpx.Request] = []
 
@@ -234,7 +236,7 @@ async def test_list_messages_uses_basic_auth_and_pagination_query(
                     {
                         "id": "message-id",
                         "sender": "sender@example.com",
-                        "subject": "告警测试",
+                        "subject": subject,
                         "created_at": "2026-10-20T04:30:00Z",
                         "content": "private-email-body",
                         "deliveries": [
@@ -278,7 +280,7 @@ async def test_list_messages_uses_basic_auth_and_pagination_query(
     assert result.page == options.get("page", 1)
     assert result.page_size == options.get("page_size", 20)
     assert result.items[0].deliveries[0].state == DeliveryState.PENDING
-    assert result.items[0].subject == "告警测试"
+    assert result.items[0].subject == subject
     assert "private-email-body" not in result.model_dump_json()
 
 
@@ -296,6 +298,25 @@ async def test_list_messages_uses_basic_auth_and_pagination_query(
         ),
         (httpx.Response(200, content=_SMTP_VALUE.encode()), 502),
         (httpx.Response(200, json={"items": _SMTP_VALUE, "total": 0}), 502),
+        (
+            httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "message-id",
+                            "sender": "sender@example.com",
+                            "created_at": "2026-10-20T04:30:00Z",
+                            "deliveries": [],
+                            "content": _SMTP_VALUE,
+                            "password": _API_VALUE,
+                        }
+                    ],
+                    "total": 1,
+                },
+            ),
+            502,
+        ),
         (httpx.ConnectError(_API_VALUE), 502),
         (httpx.ReadTimeout(_SMTP_VALUE), 502),
     ],

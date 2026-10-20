@@ -132,6 +132,7 @@ def test_message_page_passes_pagination_and_returns_recipient_results(
                 MessageRecord(
                     id="message-id",
                     sender="sender@example.com",
+                    subject="告警测试",
                     created_at=datetime(2026, 10, 20, 8, tzinfo=UTC),
                     deliveries=[
                         DeliveryStatus(
@@ -154,6 +155,7 @@ def test_message_page_passes_pagination_and_returns_recipient_results(
     records.assert_awaited_once_with(page=2, page_size=10)
     item = response.json()["items"][0]
     assert set(item) == {"id", "sender", "subject", "created_at", "deliveries"}
+    assert item["subject"] == "告警测试"
     assert item["created_at"] == "2026-10-20T08:00:00Z"
     assert item["deliveries"] == [
         {
