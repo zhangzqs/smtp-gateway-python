@@ -4,7 +4,7 @@ from http import HTTPMethod, HTTPStatus
 from typing import TypeVar
 from urllib.parse import quote
 
-import httpx
+import httpx2 as httpx
 from pydantic import BaseModel
 
 from .models import MessageContent, MessagePage, SmtpSettings, SmtpSettingsWrite

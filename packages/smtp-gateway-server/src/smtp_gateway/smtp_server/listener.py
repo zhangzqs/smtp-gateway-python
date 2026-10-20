@@ -5,11 +5,10 @@ import logging
 import secrets
 import ssl
 from collections.abc import Callable
-from typing import Protocol, cast
+from typing import Protocol, cast, override
 
 from aiosmtpd.smtp import SMTP, AuthResult, Envelope, LoginPassword, Session
 from sqlalchemy.exc import SQLAlchemyError
-from typing_extensions import override
 
 from smtp_gateway.shared import (
     MessageTooLargeError,

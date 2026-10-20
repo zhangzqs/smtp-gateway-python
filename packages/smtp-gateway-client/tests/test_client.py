@@ -6,7 +6,7 @@ from collections.abc import Callable
 from http import HTTPMethod
 from unittest.mock import Mock
 
-import httpx
+import httpx2 as httpx
 import pytest
 from pydantic import SecretStr
 from typing_extensions import override

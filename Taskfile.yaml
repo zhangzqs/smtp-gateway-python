@@ -45,6 +45,11 @@ tasks:
       - task: client:build
       - task: server:build
 
+  test-client-wheel:
+    desc: 使用 Python 3.11 测试已构建的客户端 wheel
+    cmds:
+      - task: client:test-wheel
+
   image:
     desc: 构建服务端镜像并检查命令入口
     cmds:

@@ -23,3 +23,21 @@ tasks:
     desc: 构建客户端 wheel 到 workspace 的 dist 目录
     cmds:
       - uv build --package smtp-gateway-client --wheel --out-dir ../../dist
+
+  test-wheel:
+    desc: 在隔离的 Python 3.11 环境测试客户端 wheel
+    cmds:
+      - |
+        set -eu
+        version="$(uv version --package smtp-gateway-client --short)"
+        wheel="../../dist/smtp_gateway_client-$version-py3-none-any.whl"
+        if [ ! -f "$wheel" ]; then
+          echo "Build the current client wheel before testing" >&2
+          exit 1
+        fi
+        requirements="$(mktemp)"
+        trap 'rm -f "$requirements"' EXIT
+        uv export --locked --only-group dev --no-hashes --output-file "$requirements"
+        uv run --isolated --no-project --python 3.11 \
+          --with "$wheel" --with-requirements "$requirements" \
+          pytest --import-mode=importlib tests
