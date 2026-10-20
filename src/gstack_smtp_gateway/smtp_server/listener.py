@@ -5,23 +5,31 @@ import logging
 import secrets
 import ssl
 from collections.abc import Callable
-from typing import cast
+from typing import Protocol, cast
 
 from aiosmtpd.smtp import SMTP, AuthResult, Envelope, LoginPassword, Session
 from sqlalchemy.exc import SQLAlchemyError
 from typing_extensions import override
 
-from .database import NotConfiguredError
-from .schemas import validate_address
-from .service import MessageService, MessageTooLargeError
+from gstack_smtp_gateway.shared import (
+    MessageTooLargeError,
+    NotConfiguredError,
+    validate_address,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class _Messages(Protocol):
+    async def submit_raw(
+        self, *, sender: str, recipients: list[str], content: bytes
+    ) -> str: ...
 
 
 class SubmissionHandler:
     """只在数据库事务提交成功后发送 SMTP 250 确认。"""
 
-    def __init__(self, *, service: MessageService, max_recipients: int) -> None:
+    def __init__(self, *, service: _Messages, max_recipients: int) -> None:
         self._service = service
         self._max_recipients = max_recipients
         self._active: set[asyncio.Task[object]] = set()

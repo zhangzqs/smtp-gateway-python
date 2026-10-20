@@ -8,15 +8,16 @@ import pytest_asyncio
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from gstack_smtp_gateway.database import Database
-from gstack_smtp_gateway.schemas import DeliveryState, SmtpSettingsWrite, TlsMode
+from gstack_smtp_gateway.persistence import Database, RelayRepository
+from gstack_smtp_gateway.services.relay import RelayService
+from gstack_smtp_gateway.shared import DeliveryState, SmtpSettingsWrite, TlsMode
 
 
 @dataclass(kw_only=True)
 class _Storage:
-    database: Database
+    relay: RelayService
     engine: AsyncEngine
     url: str
     key: str
@@ -29,16 +30,16 @@ async def storage(
 ) -> AsyncIterator[_Storage]:
     clock = [1000.0]
 
-    async def current_time(_session: AsyncSession) -> float:
+    async def current_time(_repository: RelayRepository) -> float:
         return clock[0]
 
-    monkeypatch.setattr(Database, "_now", staticmethod(current_time))
+    monkeypatch.setattr(RelayRepository, "now", current_time)
     url = f"sqlite+aiosqlite:///{tmp_path / 'gateway.db'}"
     key = Fernet.generate_key().decode()
     engine = create_async_engine(url)
-    database = Database(engine=engine, encryption_key=key)
-    await database.initialize()
-    await database.put_smtp(
+    relay = RelayService(database=Database(engine=engine), encryption_key=key)
+    await relay.initialize()
+    await relay.put_smtp(
         SmtpSettingsWrite(
             host="smtp.example.com",
             port=587,
@@ -48,13 +49,13 @@ async def storage(
         )
     )
     try:
-        yield _Storage(database=database, engine=engine, url=url, key=key, clock=clock)
+        yield _Storage(relay=relay, engine=engine, url=url, key=key, clock=clock)
     finally:
-        await database.close()
+        await relay.close()
 
 
-async def _enqueue(database: Database, recipients: list[str] | None = None) -> str:
-    return await database.enqueue(
+async def _enqueue(relay: RelayService, recipients: list[str] | None = None) -> str:
+    return await relay.enqueue(
         sender="grafana@example.com",
         recipients=recipients or ["operator@example.com"],
         content=b"Subject: alert\r\n\r\nprivate notification body\r\n",
@@ -66,7 +67,10 @@ async def test_concurrent_initialization_of_empty_database(tmp_path: Path) -> No
     url = f"sqlite+aiosqlite:///{tmp_path / 'empty-gateway.db'}"
     key = Fernet.generate_key().decode()
     instances = [
-        Database(engine=create_async_engine(url), encryption_key=key) for _ in range(8)
+        RelayService(
+            database=Database(engine=create_async_engine(url)), encryption_key=key
+        )
+        for _ in range(8)
     ]
     try:
         await asyncio.gather(*(database.initialize() for database in instances))
@@ -90,10 +94,11 @@ async def test_concurrent_initialization_of_empty_database(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_queue_and_settings_survive_database_restart(storage: _Storage) -> None:
-    identifier = await _enqueue(storage.database)
-    await storage.database.close()
-    restored = Database(
-        engine=create_async_engine(storage.url), encryption_key=storage.key
+    identifier = await _enqueue(storage.relay)
+    await storage.relay.close()
+    restored = RelayService(
+        database=Database(engine=create_async_engine(storage.url)),
+        encryption_key=storage.key,
     )
     try:
         await restored.initialize()
@@ -116,7 +121,7 @@ async def test_queue_and_settings_survive_database_restart(storage: _Storage) ->
 
 @pytest.mark.asyncio
 async def test_password_and_content_are_encrypted_and_hidden(storage: _Storage) -> None:
-    identifier = await _enqueue(storage.database)
+    identifier = await _enqueue(storage.relay)
     async with storage.engine.connect() as connection:
         password = await connection.scalar(
             text("SELECT secret FROM gstack_smtp_settings")
@@ -131,8 +136,8 @@ async def test_password_and_content_are_encrypted_and_hidden(storage: _Storage) 
     cipher = Fernet(storage.key.encode())
     assert cipher.decrypt(password) == b"upstream-secret"
     assert b"private notification body" in cipher.decrypt(content)
-    settings = (await storage.database.get_smtp()).model_dump_json()
-    status = await storage.database.status(identifier)
+    settings = (await storage.relay.get_smtp()).model_dump_json()
+    status = await storage.relay.status(identifier)
     assert status is not None
     assert "password" not in settings.replace("has_password", "")
     assert "upstream-secret" not in settings
@@ -145,13 +150,13 @@ async def test_password_and_content_are_encrypted_and_hidden(storage: _Storage) 
 async def test_wrong_encryption_key_fails_during_startup(
     storage: _Storage, with_password: bool
 ) -> None:
-    await _enqueue(storage.database)
+    await _enqueue(storage.relay)
     if not with_password:
-        await storage.database.put_smtp(
+        await storage.relay.put_smtp(
             SmtpSettingsWrite(host="smtp.example.com", port=587)
         )
-    other = Database(
-        engine=create_async_engine(storage.url),
+    other = RelayService(
+        database=Database(engine=create_async_engine(storage.url)),
         encryption_key=Fernet.generate_key().decode(),
     )
     try:
@@ -165,20 +170,21 @@ async def test_wrong_encryption_key_fails_during_startup(
 async def test_concurrent_claims_across_database_instances_have_one_owner(
     storage: _Storage,
 ) -> None:
-    identifier = await _enqueue(storage.database)
-    other = Database(
-        engine=create_async_engine(storage.url), encryption_key=storage.key
+    identifier = await _enqueue(storage.relay)
+    other = RelayService(
+        database=Database(engine=create_async_engine(storage.url)),
+        encryption_key=storage.key,
     )
     try:
         await other.initialize()
         claims = await asyncio.gather(
-            storage.database.claim(max_attempts=3, lease_seconds=10),
+            storage.relay.claim(max_attempts=3, lease_seconds=10),
             other.claim(max_attempts=3, lease_seconds=10),
         )
         winners = [claim for claim in claims if claim is not None]
         assert len(winners) == 1
         assert winners[0].message_id == identifier
-        status = await storage.database.status(identifier)
+        status = await storage.relay.status(identifier)
         assert status is not None
         assert status.deliveries[0].attempts == 1
     finally:
@@ -187,28 +193,28 @@ async def test_concurrent_claims_across_database_instances_have_one_owner(
 
 @pytest.mark.asyncio
 async def test_expired_claim_recovers_and_fences_old_owner(storage: _Storage) -> None:
-    identifier = await _enqueue(storage.database)
-    first = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    identifier = await _enqueue(storage.relay)
+    first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
-    assert await storage.database.claim(max_attempts=3, lease_seconds=10) is None
+    assert await storage.relay.claim(max_attempts=3, lease_seconds=10) is None
     storage.clock[0] += 10
-    second = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    second = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert second is not None
     assert second.id == first.id
     assert second.token != first.token
     assert second.attempts == 2
 
-    await storage.database.finish(first, error=None, max_attempts=3, retry_delay=0)
-    status = await storage.database.status(identifier)
+    await storage.relay.finish(first, error=None, max_attempts=3, retry_delay=0)
+    status = await storage.relay.status(identifier)
     assert status is not None
     assert status.deliveries[0].state == DeliveryState.SENDING
     assert status.deliveries[0].attempts == 2
 
-    await storage.database.finish(second, error=None, max_attempts=3, retry_delay=0)
-    await storage.database.finish(
+    await storage.relay.finish(second, error=None, max_attempts=3, retry_delay=0)
+    await storage.relay.finish(
         first, error="stale failure", max_attempts=3, retry_delay=0
     )
-    status = await storage.database.status(identifier)
+    status = await storage.relay.status(identifier)
     assert status is not None
     assert status.deliveries[0].state == DeliveryState.DELIVERED
     assert status.deliveries[0].last_error is None
@@ -216,65 +222,65 @@ async def test_expired_claim_recovers_and_fences_old_owner(storage: _Storage) ->
 
 @pytest.mark.asyncio
 async def test_crash_during_final_attempt_becomes_terminal(storage: _Storage) -> None:
-    identifier = await _enqueue(storage.database)
-    claim = await storage.database.claim(max_attempts=1, lease_seconds=10)
+    identifier = await _enqueue(storage.relay)
+    claim = await storage.relay.claim(max_attempts=1, lease_seconds=10)
     assert claim is not None
     storage.clock[0] += 10
-    assert await storage.database.claim(max_attempts=1, lease_seconds=10) is None
-    status = await storage.database.status(identifier)
+    assert await storage.relay.claim(max_attempts=1, lease_seconds=10) is None
+    status = await storage.relay.status(identifier)
     assert status is not None
     assert status.deliveries[0].state == DeliveryState.FAILED
     assert status.deliveries[0].attempts == 1
     assert status.deliveries[0].last_error is not None
-    await storage.database.prune(retention_seconds=5)
-    assert await storage.database.status(identifier) is not None
+    await storage.relay.prune(retention_seconds=5)
+    assert await storage.relay.status(identifier) is not None
     storage.clock[0] += 6
-    await storage.database.prune(retention_seconds=5)
-    assert await storage.database.status(identifier) is None
+    await storage.relay.prune(retention_seconds=5)
+    assert await storage.relay.status(identifier) is None
 
 
 @pytest.mark.asyncio
 async def test_lowering_attempt_limit_terminates_already_exhausted_pending_delivery(
     storage: _Storage,
 ) -> None:
-    identifier = await _enqueue(storage.database)
-    first = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    identifier = await _enqueue(storage.relay)
+    first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
-    await storage.database.finish(
+    await storage.relay.finish(
         first, error="SMTPException", max_attempts=3, retry_delay=100
     )
-    assert await storage.database.claim(max_attempts=1, lease_seconds=10) is None
-    status = await storage.database.status(identifier)
+    assert await storage.relay.claim(max_attempts=1, lease_seconds=10) is None
+    status = await storage.relay.status(identifier)
     assert status is not None
     assert status.deliveries[0].state == DeliveryState.FAILED
     assert status.deliveries[0].attempts == 1
     storage.clock[0] += 11
-    await storage.database.prune(retention_seconds=10)
-    assert await storage.database.status(identifier) is None
+    await storage.relay.prune(retention_seconds=10)
+    assert await storage.relay.status(identifier) is None
 
 
 @pytest.mark.asyncio
 async def test_successful_recipients_are_not_reclaimed(storage: _Storage) -> None:
     identifier = await _enqueue(
-        storage.database,
+        storage.relay,
         ["first@example.com", "second@example.com", "first@example.com"],
     )
-    first = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
-    await storage.database.finish(first, error=None, max_attempts=3, retry_delay=0)
-    second = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    await storage.relay.finish(first, error=None, max_attempts=3, retry_delay=0)
+    second = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert second is not None
     assert second.recipient != first.recipient
-    await storage.database.finish(
+    await storage.relay.finish(
         second, error="SMTPException", max_attempts=3, retry_delay=5
     )
-    assert await storage.database.claim(max_attempts=3, lease_seconds=10) is None
+    assert await storage.relay.claim(max_attempts=3, lease_seconds=10) is None
     storage.clock[0] += 5
-    retry = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    retry = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert retry is not None
     assert retry.recipient == second.recipient
     assert retry.attempts == 2
-    status = await storage.database.status(identifier)
+    status = await storage.relay.status(identifier)
     assert status is not None
     assert len(status.deliveries) == 2
 
@@ -283,42 +289,42 @@ async def test_successful_recipients_are_not_reclaimed(storage: _Storage) -> Non
 async def test_retention_preserves_pending_and_active_messages(
     storage: _Storage,
 ) -> None:
-    pending = await _enqueue(storage.database)
-    sending = await _enqueue(storage.database)
-    finished = await _enqueue(storage.database)
+    pending = await _enqueue(storage.relay)
+    sending = await _enqueue(storage.relay)
+    finished = await _enqueue(storage.relay)
     claims = [
-        await storage.database.claim(max_attempts=3, lease_seconds=10) for _ in range(3)
+        await storage.relay.claim(max_attempts=3, lease_seconds=10) for _ in range(3)
     ]
     by_message = {claim.message_id: claim for claim in claims if claim is not None}
-    await storage.database.finish(
+    await storage.relay.finish(
         by_message[pending], error="SMTPException", max_attempts=3, retry_delay=100
     )
-    await storage.database.finish(
+    await storage.relay.finish(
         by_message[finished], error=None, max_attempts=3, retry_delay=0
     )
     storage.clock[0] += 20
-    await storage.database.prune(retention_seconds=10)
-    assert await storage.database.status(pending) is not None
-    assert await storage.database.status(sending) is not None
-    assert await storage.database.status(finished) is None
+    await storage.relay.prune(retention_seconds=10)
+    assert await storage.relay.status(pending) is not None
+    assert await storage.relay.status(sending) is not None
+    assert await storage.relay.status(finished) is None
 
 
 @pytest.mark.asyncio
 async def test_retention_waits_for_every_recipient_to_finish(storage: _Storage) -> None:
     identifier = await _enqueue(
-        storage.database, ["first@example.com", "second@example.com"]
+        storage.relay, ["first@example.com", "second@example.com"]
     )
-    first = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    first = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert first is not None
-    await storage.database.finish(first, error=None, max_attempts=3, retry_delay=0)
+    await storage.relay.finish(first, error=None, max_attempts=3, retry_delay=0)
     storage.clock[0] += 20
-    await storage.database.prune(retention_seconds=10)
-    assert await storage.database.status(identifier) is not None
-    second = await storage.database.claim(max_attempts=3, lease_seconds=10)
+    await storage.relay.prune(retention_seconds=10)
+    assert await storage.relay.status(identifier) is not None
+    second = await storage.relay.claim(max_attempts=3, lease_seconds=10)
     assert second is not None
-    await storage.database.finish(second, error=None, max_attempts=3, retry_delay=0)
-    await storage.database.prune(retention_seconds=10)
-    assert await storage.database.status(identifier) is not None
+    await storage.relay.finish(second, error=None, max_attempts=3, retry_delay=0)
+    await storage.relay.prune(retention_seconds=10)
+    assert await storage.relay.status(identifier) is not None
     storage.clock[0] += 11
-    await storage.database.prune(retention_seconds=10)
-    assert await storage.database.status(identifier) is None
+    await storage.relay.prune(retention_seconds=10)
+    assert await storage.relay.status(identifier) is None

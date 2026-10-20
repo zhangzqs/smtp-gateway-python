@@ -23,11 +23,10 @@ class GatewayConfig(BaseSettings):
     api_password: SecretStr
     http_host: str = "127.0.0.1"
     http_port: int = Field(default=18081, ge=0, le=65535)
-    smtp_enabled: bool = True
     smtp_host: str = "127.0.0.1"
     smtp_port: int = Field(default=1025, ge=0, le=65535)
     smtp_username: str = "grafana"
-    smtp_password: SecretStr | None = None
+    smtp_password: SecretStr
     smtp_tls_cert: Path | None = None
     smtp_tls_key: Path | None = None
     smtp_allow_insecure_auth: bool = False
@@ -62,15 +61,10 @@ class GatewayConfig(BaseSettings):
             raise ValueError("Lease duration must exceed delivery timeout")
         if bool(self.smtp_tls_cert) != bool(self.smtp_tls_key):
             raise ValueError("SMTP TLS certificate and key must be configured together")
-        if self.smtp_enabled:
-            if (
-                not self.smtp_username
-                or self.smtp_password is None
-                or not self.smtp_password.get_secret_value()
-            ):
-                raise ValueError("SMTP username and password are required")
-            if self.smtp_tls_cert is None and not self.smtp_allow_insecure_auth:
-                raise ValueError("SMTP requires TLS or explicit insecure AUTH opt-in")
+        if not self.smtp_username or not self.smtp_password.get_secret_value():
+            raise ValueError("SMTP username and password are required")
+        if self.smtp_tls_cert is None and not self.smtp_allow_insecure_auth:
+            raise ValueError("SMTP requires TLS or explicit insecure AUTH opt-in")
         return self
 
 

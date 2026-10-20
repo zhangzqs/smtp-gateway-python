@@ -1,11 +1,10 @@
-"""HTTP 边界的配置、邮件和安全响应模型。"""
+"""SMTP 上游配置与信封地址的共享类型。"""
 
 from email.errors import HeaderParseError
 from email.headerregistry import Address
 from enum import StrEnum
-from typing import Self
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 
 class TlsMode(StrEnum):
@@ -53,66 +52,7 @@ def validate_address(value: str) -> str:
     return value
 
 
-class MessageWrite(BaseModel):
-    sender: str
-    recipients: list[str] = Field(min_length=1, max_length=1000)
-    subject: str = Field(max_length=998)
-    text: str | None = None
-    html: str | None = None
-
-    @field_validator("sender")
-    @classmethod
-    def validate_sender(cls, value: str) -> str:
-        return validate_address(value)
-
-    @field_validator("recipients")
-    @classmethod
-    def validate_recipients(cls, values: list[str]) -> list[str]:
-        return list(dict.fromkeys(validate_address(value) for value in values))
-
-    @field_validator("subject")
-    @classmethod
-    def validate_subject(cls, value: str) -> str:
-        if any(char in value for char in "\r\n\x00"):
-            raise ValueError("Subject must not contain control characters")
-        return value
-
-    @model_validator(mode="after")
-    def validate_body(self) -> Self:
-        if self.text is None and self.html is None:
-            raise ValueError("At least one of text or html is required")
-        return self
-
-
-class MessageAccepted(BaseModel):
-    id: str
-
-
-class DeliveryState(StrEnum):
-    PENDING = "pending"
-    SENDING = "sending"
-    DELIVERED = "delivered"
-    FAILED = "failed"
-
-
-class DeliveryStatus(BaseModel):
-    recipient: str
-    state: DeliveryState
-    attempts: int
-    last_error: str | None
-
-
-class MessageStatus(BaseModel):
-    id: str
-    deliveries: list[DeliveryStatus]
-
-
 __all__ = [
-    "DeliveryState",
-    "DeliveryStatus",
-    "MessageAccepted",
-    "MessageStatus",
-    "MessageWrite",
     "SmtpSettings",
     "SmtpSettingsWrite",
     "TlsMode",

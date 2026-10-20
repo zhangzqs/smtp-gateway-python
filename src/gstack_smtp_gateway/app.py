@@ -15,10 +15,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .api import create_router
 from .config import GatewayConfig
-from .database import Database, NotConfiguredError
-from .delivery import DeliveryWorker, RetryPolicy, SmtpSender
-from .service import MessageService, MessageTooLargeError
-from .smtp import SmtpListener, SubmissionHandler
+from .persistence import Database
+from .services import DeliveryWorker, MessageService, RelayService, RetryPolicy
+from .smtp_client import SmtpSender
+from .smtp_server import SmtpListener, SubmissionHandler
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class _BodyLimit:
         self._max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["method"] not in {"POST", "PUT"}:
+        if scope["type"] != "http" or scope["method"] != "PUT":
             await self._app(scope, receive, send)
             return
         buffered = bytearray()
@@ -63,15 +63,17 @@ def create_app(config: GatewayConfig) -> FastAPI:
         engine=create_async_engine(
             config.database_url.get_secret_value(), pool_pre_ping=True
         ),
-        encryption_key=config.encryption_key.get_secret_value(),
+    )
+    relay = RelayService(
+        database=database, encryption_key=config.encryption_key.get_secret_value()
     )
     messages = MessageService(
-        database=database,
+        relay=relay,
         max_message_bytes=config.max_message_bytes,
         max_recipients=config.max_recipients,
     )
     worker = DeliveryWorker(
-        database=database,
+        relay=relay,
         sender=SmtpSender(),
         policy=RetryPolicy(
             max_attempts=config.max_attempts,
@@ -84,26 +86,22 @@ def create_app(config: GatewayConfig) -> FastAPI:
             retention_seconds=config.retention_seconds,
         ),
     )
-    listener = None
-    if config.smtp_enabled:
-        tls_context = None
-        if config.smtp_tls_cert is not None and config.smtp_tls_key is not None:
-            tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
-            tls_context.load_cert_chain(config.smtp_tls_cert, config.smtp_tls_key)
-        if config.smtp_password is None:
-            raise RuntimeError("SMTP credentials are required")
-        listener = SmtpListener(
-            handler=SubmissionHandler(
-                service=messages, max_recipients=config.max_recipients
-            ),
-            host=config.smtp_host,
-            port=config.smtp_port,
-            username=config.smtp_username,
-            password=config.smtp_password.get_secret_value(),
-            tls_context=tls_context,
-            max_message_bytes=config.max_message_bytes,
-        )
+    tls_context = None
+    if config.smtp_tls_cert is not None and config.smtp_tls_key is not None:
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls_context.load_cert_chain(config.smtp_tls_cert, config.smtp_tls_key)
+    listener = SmtpListener(
+        handler=SubmissionHandler(
+            service=messages, max_recipients=config.max_recipients
+        ),
+        host=config.smtp_host,
+        port=config.smtp_port,
+        username=config.smtp_username,
+        password=config.smtp_password.get_secret_value(),
+        tls_context=tls_context,
+        max_message_bytes=config.max_message_bytes,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
@@ -118,20 +116,17 @@ def create_app(config: GatewayConfig) -> FastAPI:
         async with AsyncExitStack() as stack:
             stack.push_async_callback(database.close)
             stack.push_async_callback(stop_worker)
-            if listener is not None:
-                stack.push_async_callback(listener.close)
-            await database.initialize()
-            if listener is not None:
-                await listener.start()
+            stack.push_async_callback(listener.close)
+            await relay.initialize()
+            await listener.start()
             task = asyncio.create_task(worker.run())
             yield
 
     app = FastAPI(title="GStack SMTP Gateway", lifespan=lifespan)
-    app.add_middleware(_BodyLimit, max_bytes=config.max_message_bytes + 65536)
+    app.add_middleware(_BodyLimit, max_bytes=65536)
     app.include_router(
         create_router(
-            settings=database,
-            messages=messages,
+            settings=relay,
             username=config.api_username,
             password=config.api_password.get_secret_value(),
         )
@@ -147,24 +142,12 @@ def create_app(config: GatewayConfig) -> FastAPI:
     async def validation_error(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        # 验证错误不能将请求中的明文密码或整封邮件回显给调用方。
+        # 验证错误不能将请求中的明文密码回显给调用方。
         errors = [
             {"loc": item["loc"], "type": item["type"], "msg": item["msg"]}
             for item in exc.errors()
         ]
         return JSONResponse(status_code=422, content={"detail": errors})
-
-    @app.exception_handler(NotConfiguredError)
-    async def not_configured(
-        _request: Request, _exc: NotConfiguredError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=409, content={"detail": "Upstream SMTP is not configured"}
-        )
-
-    @app.exception_handler(MessageTooLargeError)
-    async def too_large(_request: Request, _exc: MessageTooLargeError) -> JSONResponse:
-        return JSONResponse(status_code=413, content={"detail": "Message is too large"})
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error(_request: Request, _exc: SQLAlchemyError) -> JSONResponse:

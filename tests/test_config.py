@@ -12,8 +12,10 @@ from gstack_smtp_gateway import GatewayConfig
     [
         {"api_password": ""},
         {"encryption_key": "invalid"},
-        {"smtp_enabled": True},
-        {"smtp_enabled": True, "smtp_password": "credential"},
+        {"smtp_password": None},
+        {"smtp_password": ""},
+        {"smtp_username": ""},
+        {"smtp_allow_insecure_auth": False},
         {"database_url": "mysql+asyncmy://localhost/database"},
         {"database_url": "invalid-url"},
         {"lease_seconds": 60, "delivery_timeout": 60},
@@ -25,7 +27,8 @@ def test_invalid_runtime_configuration_is_rejected(override: dict[str, object]) 
         "api_username": "manager",
         "api_password": "test-api-credential",
         "encryption_key": Fernet.generate_key().decode(),
-        "smtp_enabled": False,
+        "smtp_password": "test-submission-credential",
+        "smtp_allow_insecure_auth": True,
     }
     with pytest.raises(ValidationError):
         GatewayConfig.model_validate({**values, **override})
