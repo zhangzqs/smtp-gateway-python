@@ -3,18 +3,18 @@ name = "smtp-gateway-client"
 version = "0.0.5"
 description = "Async Python client for SMTP gateway configuration"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
-license = { text = "Apache-2.0" }
+requires-python = ">=3.11,<3.16"
+license = "Apache-2.0"
 dependencies = [
-    "httpx>=0.27,<1",
-    "pydantic>=2,<3",
+    "httpx2>=2.15.1,<3",
+    "pydantic>=2.14.1,<3",
 ]
 
 [project.urls]
 Repository = "https://github.com/zhangzqs/smtp-gateway-python"
 
 [build-system]
-requires = ["hatchling<1.27"]
+requires = ["hatchling>=1.32.4,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

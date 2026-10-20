@@ -14,7 +14,9 @@ HTTP API 管理上游配置并查询投递记录与邮件内容，邮件通过 S
 
 ## 安装与运行
 
-需要 Python 3.11 和 [uv](https://docs.astral.sh/uv/)。从源码安装：
+服务端通过容器镜像部署；源码开发使用 Python 3.15 和 [uv](https://docs.astral.sh/uv/) 0.13.3。客户端支持 Python 3.11 至 3.15。
+
+从源码安装：
 
 ```sh
 git clone https://github.com/zhangzqs/smtp-gateway-python.git
@@ -128,7 +130,7 @@ docker pull ghcr.io/zhangzqs/smtp-gateway-python:0.0.5
 docker run --rm ghcr.io/zhangzqs/smtp-gateway-python:0.0.5 --version
 ```
 
-也可以在仓库根目录运行 `docker build --tag smtp-gateway-python:local .` 从源码构建。运行镜像基于 Alpine，原生依赖使用 musllinux wheel；uv、安装清单和构建产物通过
+也可以在仓库根目录运行 `docker build --tag smtp-gateway-python:local .` 从源码构建。运行镜像基于 Alpine，原生依赖使用 musllinux wheel；PyYAML 从源码安装纯 Python 实现。uv、安装清单和构建产物通过
 BuildKit 临时挂载，不保留在运行镜像中。镜像不安装开发依赖或测试文件。
 
 镜像以 UID/GID `10001:10001` 运行，工作目录为 `/data`。监听地址、端口和数据库路径由配置决定；镜像不会用环境变量覆盖 YAML。
@@ -165,6 +167,8 @@ task setup
 task check
 task test
 task build
+task test-client-wheel
+task image
 ```
 
 服务代码位于 `packages/smtp-gateway-server/`，客户端代码位于 `packages/smtp-gateway-client/`。根 Taskfile 聚合成员的检查、测试与两个 wheel 的构建。服务命令仍为
@@ -173,9 +177,9 @@ task build
 服务的 `app.py` 组装依赖并管理生命周期；`api/` 管理 HTTP 接口，`smtp_server/` 接收 SMTP，`smtp_client/` 连接上游，`services/` 负责事务和投递用例，`persistence/`
 保存 ORM 与 SQL，`shared/` 定义服务内部稳定类型。客户端包提供共享协议模型和 HTTP 封装。
 
-CI 调用 `task setup/check/test/build` 并验证两个 wheel 与 server 镜像。发布 GitHub
-Release 时，发布工作流先检查标签与两个包的版本一致，再执行相同门禁，将两个 wheel 上传为 Release 附件，并推送
-`ghcr.io/zhangzqs/smtp-gateway-python:<版本>`；只有稳定版更新 `latest`。不发布到 PyPI。
+CI 调用 `task setup/check/test/build`，在 Python 3.15 上验证服务与客户端，并通过 `task test-client-wheel` 验证客户端成品在 Python 3.11 中的安装和测试，随后构建 server 镜像。服务端采用 Python 3.15.0／Alpine 3.24，工具链使用 uv 0.13.3、Task 3.54.0 和 Hatchling 1.32.4 及后续 1.x 版本。发布 GitHub
+Release 时，发布工作流先检查标签与两个包的版本一致，再执行相同门禁，将客户端 wheel 上传为 Release 附件，并推送
+`ghcr.io/zhangzqs/smtp-gateway-python:<版本>`；只有稳定版更新 `latest`。服务端 wheel 只用于镜像内部构建，不作为发布附件。不发布到 PyPI。
 
 发布工作流始终检出该已发布 Release 标签对应的 commit。手动重试必须提供已发布的 Release 标签，不能以任意分支代替发布标签。
 

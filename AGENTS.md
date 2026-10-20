@@ -1,6 +1,6 @@
 # 开发约定
 
-独立的 Python SMTP 网关，Python 3.11、FastAPI、SQLAlchemy asyncio，通过 `uv` workspace 管理依赖。
+独立的 Python SMTP 网关，服务端使用 Python 3.15、FastAPI 和 SQLAlchemy asyncio，客户端支持 Python 3.11 至 3.15。通过 `uv` workspace 管理依赖。
 
 ## 结构与边界
 
@@ -21,7 +21,7 @@
 - 成员目录保留局部 Taskfile，根目录聚合成员检查、测试和 wheel 构建。
 - 测试目录镜像源码结构，验证公开行为；单元测试不访问外部网络或生产服务。
 - 修改入口、打包或镜像时验证 wheel 安装与容器启动。
-- 发布标签必须与两个成员版本一致；镜像仅安装服务运行所需依赖，两个 wheel 作为 Release 附件发布。
+- 发布标签必须与两个成员版本一致；镜像仅安装服务运行所需依赖，客户端 wheel 作为 Release 附件发布，服务端 wheel 仅用于镜像内部构建。
 - 不在日志或错误响应中记录密码、邮件正文或原始配置输入。
 - 邮件只走 SMTP；HTTP 用于配置管理、投递记录与内容查询和健康检查。
 

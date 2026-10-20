@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2 as httpx
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr

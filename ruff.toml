@@ -1,6 +1,9 @@
 line-length = 88
-target-version = "py311"
+target-version = "py315"
 src = ["packages/*/src"]
+
+[per-file-target-version]
+"packages/smtp-gateway-client/**" = "py311"
 
 [lint]
 preview = true
@@ -13,7 +16,7 @@ select = [
     "F",
 
     "I",  # 导入排序
-    "UP", # Python 3.11 写法
+    "UP", # 按包的 Python 版本要求升级写法
     "UP052", # contextmanager 使用 Generator 返回注解
     "B",  # 常见易错代码
 

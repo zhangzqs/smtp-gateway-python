@@ -1,6 +1,6 @@
 # SMTP 网关 Python 客户端
 
-`smtp-gateway-client` 提供异步管理客户端和网关共享模型，支持 Python 3.11。
+`smtp-gateway-client` 提供异步管理客户端和网关共享模型，支持 Python 3.11 至 3.15。
 
 ## 使用
 
@@ -75,5 +75,5 @@ HTTP 错误抛出 `SmtpGatewayAPIError`，可读取 `status_code`；连接、超
 
 ## 本地验证
 
-在成员目录执行 `task check`、`task test` 和 `task build`。构建产物写入 workspace 根目录的 `dist/`。
-测试通过构造参数 `transport` 注入 `httpx.MockTransport`，不访问外部网络。
+在成员目录执行 `task check`、`task test` 和 `task build`。构建产物写入 workspace 根目录的 `dist/`。workspace 开发环境使用 Python 3.15；构建后在仓库根目录运行 `task test-client-wheel`，会用隔离的 Python 3.11 环境测试客户端成品。
+测试通过构造参数 `transport` 注入 `httpx2.MockTransport`，不访问外部网络。

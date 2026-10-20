@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Self
+from typing import Self, override
 
 import yaml
 from cryptography.fernet import Fernet
@@ -21,7 +21,6 @@ from pydantic_settings import (
 )
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
-from typing_extensions import override
 
 
 class ConfigurationFileError(ValueError):
