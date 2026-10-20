@@ -5,6 +5,13 @@ AUTH 提交邮件，网关持久化后返回成功，再由后台连接指定的
 
 HTTP API 管理上游配置，邮件通过 SMTP Submission 接收。正文和上游密码使用部署方提供的 Fernet 密钥加密保存。
 
+项目使用 uv workspace 管理两个发行包，当前版本均为 `0.0.1`：
+
+| 发行包                | Python 包             | 职责                                 |
+| --------------------- | --------------------- | ------------------------------------ |
+| `smtp-gateway-server` | `smtp_gateway`        | HTTP 管理、SMTP 接收、持久队列与投递 |
+| `smtp-gateway-client` | `smtp_gateway_client` | HTTP 管理客户端与共享协议模型        |
+
 ## 安装与运行
 
 需要 Python 3.11 和 [uv](https://docs.astral.sh/uv/)。从源码安装：
@@ -12,7 +19,7 @@ HTTP API 管理上游配置，邮件通过 SMTP Submission 接收。正文和上
 ```sh
 git clone https://github.com/zhangzqs/smtp-gateway-python.git
 cd smtp-gateway-python
-uv sync --locked --no-dev
+uv sync --locked --package smtp-gateway-server --no-dev
 cp config.example.yaml config.yaml
 ```
 
@@ -23,11 +30,11 @@ cp config.example.yaml config.yaml
 
 ```sh
 export SMTP_GATEWAY_HTTP__AUTH__USERNAME=manager
-export SMTP_GATEWAY_HTTP__AUTH__PASSWORD="$(uv run --locked --no-dev python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export SMTP_GATEWAY_SMTP__AUTH__PASSWORD="$(uv run --locked --no-dev python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export SMTP_GATEWAY_DATABASE__ENCRYPTION_KEY="$(uv run --locked --no-dev python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+export SMTP_GATEWAY_HTTP__AUTH__PASSWORD="$(uv run --locked --package smtp-gateway-server --no-dev python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export SMTP_GATEWAY_SMTP__AUTH__PASSWORD="$(uv run --locked --package smtp-gateway-server --no-dev python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export SMTP_GATEWAY_DATABASE__ENCRYPTION_KEY="$(uv run --locked --package smtp-gateway-server --no-dev python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
 
-uv run --locked --no-dev smtp-gateway --config-file config.yaml
+uv run --locked --package smtp-gateway-server --no-dev smtp-gateway --config-file config.yaml
 ```
 
 将生成的密钥与凭据保存在部署系统中，重启时复用。SMTP 调用方使用配置中的 `smtp.auth.username` 与对应密码；这组凭据和 HTTP 管理凭据、上游 SMTP 凭据分别管理。
@@ -93,9 +100,11 @@ SMTP 成功确认发生在邮件正文和所有收件人任务提交到同一数
 ## 容器运行
 
 ```sh
-docker build --tag smtp-gateway-python:local .
-docker run --rm smtp-gateway-python:local --version
+docker pull ghcr.io/zhangzqs/smtp-gateway-python:0.0.1
+docker run --rm ghcr.io/zhangzqs/smtp-gateway-python:0.0.1 --version
 ```
+
+也可以在仓库根目录运行 `docker build --tag smtp-gateway-python:local .` 从源码构建。运行镜像只包含 server 所需依赖与 workspace wheel，不安装开发依赖或测试文件。
 
 镜像以 UID/GID `10001:10001` 运行，工作目录为 `/data`。监听地址、端口和数据库路径由配置决定；镜像不会用环境变量覆盖 YAML。
 
@@ -111,22 +120,40 @@ docker run --rm \
   --env SMTP_GATEWAY_HTTP__AUTH__PASSWORD \
   --env SMTP_GATEWAY_SMTP__AUTH__PASSWORD \
   --env SMTP_GATEWAY_DATABASE__ENCRYPTION_KEY \
-  smtp-gateway-python:local --config-file /etc/smtp-gateway/config.yaml
+  ghcr.io/zhangzqs/smtp-gateway-python:0.0.1 --config-file /etc/smtp-gateway/config.yaml
 ```
+
+## Python 管理客户端
+
+内部调用方可以单独安装发布的客户端 wheel，无需安装 SMTP 服务或数据库依赖：
+
+```sh
+uv add "smtp-gateway-client @ https://github.com/zhangzqs/smtp-gateway-python/releases/download/v0.0.1/smtp_gateway_client-0.0.1-py3-none-any.whl"
+```
+
+客户端从 `smtp_gateway_client` 导入，提供 `SmtpGatewayClient`、`SmtpSettings`、`SmtpSettingsWrite`、`TlsMode`
+与安全的 API 异常。详见[客户端说明](packages/smtp-gateway-client/README.md)。
 
 ## 开发
 
 ```sh
-uv sync --locked
+task setup
 task check
 task test
 task build
 ```
 
-发行包名为 `smtp-gateway-python`，Python 包名为 `smtp_gateway`，命令为 `smtp-gateway`。`app.py` 组装依赖并管理生命周期；`api/` 管理 HTTP 接口，`smtp_server/`
-接收 SMTP，`smtp_client/` 连接上游，`services/` 负责事务和投递用例，`persistence/` 保存 ORM 与 SQL，`shared/` 定义稳定类型。
+服务代码位于 `packages/smtp-gateway-server/`，客户端代码位于 `packages/smtp-gateway-client/`。根 Taskfile 聚合成员的检查、测试与两个 wheel 的构建。服务命令仍为
+`smtp-gateway`。
 
-CI 执行 lint、类型检查、测试、wheel 构建及容器命令验证，不发布或部署。
+服务的 `app.py` 组装依赖并管理生命周期；`api/` 管理 HTTP 接口，`smtp_server/` 接收 SMTP，`smtp_client/` 连接上游，`services/` 负责事务和投递用例，`persistence/`
+保存 ORM 与 SQL，`shared/` 定义服务内部稳定类型。客户端包提供共享协议模型和 HTTP 封装。
+
+CI 调用 `task setup/check/test/build` 并验证两个 wheel 与 server 镜像。发布 GitHub
+Release 时，发布工作流先检查标签与两个包的版本一致，再执行相同门禁，将两个 wheel 上传为 Release 附件，并推送
+`ghcr.io/zhangzqs/smtp-gateway-python:<版本>`；只有稳定版更新 `latest`。不发布到 PyPI。
+
+发布工作流始终检出该已发布 Release 标签对应的 commit。手动重试必须提供已发布的 Release 标签，不能以任意分支代替发布标签。
 
 ## 来源与许可
 

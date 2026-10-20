@@ -19,7 +19,7 @@ def main() -> None:
         description="Durable SMTP gateway configured with YAML and SMTP_GATEWAY_* variables"
     )
     parser.add_argument(
-        "--version", action="version", version=version("smtp-gateway-python")
+        "--version", action="version", version=version("smtp-gateway-server")
     )
     parser.add_argument(
         "--config-file",

@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, SecretStr
 
-from .smtp import TlsMode
+from smtp_gateway_client import TlsMode
 
 
 class NotConfiguredError(Exception):

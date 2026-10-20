@@ -1,6 +1,6 @@
 line-length = 88
 target-version = "py311"
-src = ["src"]
+src = ["packages/*/src"]
 
 [lint]
 preview = true

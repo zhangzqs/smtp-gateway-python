@@ -9,7 +9,7 @@ from .queue import (
     NotConfiguredError,
     Upstream,
 )
-from .smtp import SmtpSettings, SmtpSettingsWrite, TlsMode, validate_address
+from .smtp import validate_address
 
 __all__ = [
     "ClaimedDelivery",
@@ -18,9 +18,6 @@ __all__ = [
     "MessageStatus",
     "MessageTooLargeError",
     "NotConfiguredError",
-    "SmtpSettings",
-    "SmtpSettingsWrite",
-    "TlsMode",
     "Upstream",
     "validate_address",
 ]

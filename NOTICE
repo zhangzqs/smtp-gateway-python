@@ -5,3 +5,6 @@ https://github.com/qbox/gstack/tree/0c0d1dde2d8c7a7b743e1b02ae6d12b9edc1e2f6/plu
 
 The extracted implementation is distributed under the Apache License, Version 2.0.
 Its source history is retained in this repository.
+
+The server implementation is maintained in packages/smtp-gateway-server/.
+The management client and shared HTTP schemas are maintained in packages/smtp-gateway-client/.

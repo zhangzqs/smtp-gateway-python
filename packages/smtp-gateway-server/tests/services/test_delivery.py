@@ -17,11 +17,10 @@ from smtp_gateway.services import DeliveryWorker, RelayService, RetryPolicy
 from smtp_gateway.shared import (
     ClaimedDelivery,
     DeliveryState,
-    SmtpSettingsWrite,
-    TlsMode,
     Upstream,
 )
 from smtp_gateway.smtp_client import SmtpSender
+from smtp_gateway_client import SmtpSettingsWrite, TlsMode
 
 
 @dataclass(kw_only=True)

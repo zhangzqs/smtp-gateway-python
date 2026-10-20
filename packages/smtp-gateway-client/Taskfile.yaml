@@ -1,0 +1,25 @@
+version: "3"
+
+tasks:
+  fix:
+    desc: 格式化客户端并安全修复 lint 问题
+    cmds:
+      - uv run --locked --all-packages ruff format src tests
+      - uv run --locked --all-packages ruff check --fix src tests
+
+  check:
+    desc: 检查客户端静态规则、格式和类型
+    cmds:
+      - uv run --locked --all-packages ruff check src tests
+      - uv run --locked --all-packages ruff format --check src tests
+      - uv run --locked --all-packages ty check --project .
+
+  test:
+    desc: 执行客户端 HTTP 边界与模型测试
+    cmds:
+      - uv run --locked --all-packages pytest tests
+
+  build:
+    desc: 构建客户端 wheel 到 workspace 的 dist 目录
+    cmds:
+      - uv build --package smtp-gateway-client --wheel --out-dir ../../dist

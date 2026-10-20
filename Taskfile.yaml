@@ -1,25 +1,52 @@
 version: "3"
 
+includes:
+  client:
+    taskfile: ./packages/smtp-gateway-client/Taskfile.yaml
+    dir: ./packages/smtp-gateway-client
+    internal: true
+  server:
+    taskfile: ./packages/smtp-gateway-server/Taskfile.yaml
+    dir: ./packages/smtp-gateway-server
+    internal: true
+
 tasks:
-  fix:
-    desc: 格式化 SMTP 网关并安全修复 lint 问题
+  default:
+    silent: true
     cmds:
-      - uv run --locked ruff format src tests
-      - uv run --locked ruff check --fix src tests
+      - task --list
+
+  setup:
+    desc: 安装全部 workspace 成员与开发工具
+    cmds:
+      - uv sync --locked --all-packages
+
+  fix:
+    desc: 格式化 workspace 并执行安全 lint 修复
+    cmds:
+      - task: client:fix
+      - task: server:fix
 
   check:
-    desc: 检查 SMTP 网关静态规则、格式和类型
+    desc: 检查所有成员的 lint、格式与类型
     cmds:
-      - uv run --locked ruff check src tests
-      - uv run --locked ruff format --check src tests
-      - uv run --locked ty check --project .
+      - task: client:check
+      - task: server:check
 
   test:
-    desc: 执行 SMTP 网关测试
+    desc: 测试所有 workspace 成员
     cmds:
-      - uv run --locked pytest tests
+      - task: client:test
+      - task: server:test
 
   build:
-    desc: 构建独立 SMTP 网关 wheel
+    desc: 构建客户端与服务端 wheel
     cmds:
-      - uv build --wheel
+      - task: client:build
+      - task: server:build
+
+  image:
+    desc: 构建服务端镜像并检查命令入口
+    cmds:
+      - docker build --tag smtp-gateway-python:local .
+      - docker run --rm smtp-gateway-python:local --version

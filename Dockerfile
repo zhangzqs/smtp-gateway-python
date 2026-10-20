@@ -4,10 +4,11 @@ FROM python:3.11-slim AS builder
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml uv.lock README.md LICENSE NOTICE ./
-COPY src/ ./src/
-RUN uv export --locked --no-dev --no-emit-project --no-hashes \
+COPY packages/ ./packages/
+RUN uv export --locked --package smtp-gateway-server --no-dev \
+        --no-emit-workspace --no-hashes \
         --output-file /tmp/requirements.txt \
-    && uv build --wheel --out-dir /dist
+    && uv build --all-packages --wheel --out-dir /dist
 
 FROM python:3.11-slim AS runtime
 COPY --from=uv /uv /usr/local/bin/uv

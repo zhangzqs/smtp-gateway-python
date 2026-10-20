@@ -12,11 +12,9 @@ from smtp_gateway.shared import (
     DeliveryStatus,
     MessageStatus,
     NotConfiguredError,
-    SmtpSettings,
-    SmtpSettingsWrite,
-    TlsMode,
     Upstream,
 )
+from smtp_gateway_client import SmtpSettings, SmtpSettingsWrite, TlsMode
 
 
 class RelayService:

@@ -25,19 +25,24 @@ jobs:
         with:
           version: "0.12.23"
           enable-cache: true
-      - name: Install dependencies
-        run: uv sync --locked
-      - name: Lint
-        run: uv run --locked ruff check src tests
-      - name: Check formatting
-        run: uv run --locked ruff format --check src tests
-      - name: Check types
-        run: uv run --locked ty check --project .
+      - uses: go-task/setup-task@v2.2.0
+      - name: Set up workspace
+        run: task setup
+      - name: Check
+        run: task check
       - name: Test
-        run: uv run --locked pytest tests
-      - name: Build wheel
-        run: uv build --wheel
-      - name: Build container
-        run: docker build --tag smtp-gateway-python:ci .
-      - name: Check container entry point
-        run: docker run --rm smtp-gateway-python:ci --version
+        run: task test
+      - name: Build wheels
+        run: task build
+      - name: Verify wheel artifacts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          wheels = list(Path("dist").glob("*.whl"))
+          expected = {"smtp_gateway_server", "smtp_gateway_client"}
+          assert len(wheels) == 2, wheels
+          assert {path.name.split("-")[0] for path in wheels} == expected, wheels
+          PY
+      - name: Verify server image
+        run: task image
