@@ -1,0 +1,47 @@
+[project]
+name = "smtp-gateway-server"
+version = "0.0.1"
+description = "Durable SMTP gateway with authenticated configuration management"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "aiosmtpd>=1.4.6,<2",
+    "aiosmtplib>=3.0,<6",
+    "aiosqlite>=0.20,<1",
+    "asyncpg>=0.30,<1",
+    "cryptography>=44",
+    "fastapi>=0.115",
+    "pydantic-settings>=2.4,<3",
+    "pyyaml>=6.0,<7",
+    "smtp-gateway-client==0.0.1",
+    "sqlalchemy[asyncio]>=2.0.38,<3",
+    "typing-extensions>=4.12,<5",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+smtp-gateway = "smtp_gateway.cli:main"
+
+[project.urls]
+Repository = "https://github.com/zhangzqs/smtp-gateway-python"
+
+[build-system]
+requires = ["hatchling<1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smtp_gateway"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"../../LICENSE" = "smtp_gateway/LICENSE"
+"../../NOTICE" = "smtp_gateway/NOTICE"
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.rules]
+missing-override-decorator = "error"

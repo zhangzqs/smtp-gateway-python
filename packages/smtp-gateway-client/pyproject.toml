@@ -1,0 +1,34 @@
+[project]
+name = "smtp-gateway-client"
+version = "0.0.1"
+description = "Async Python client for SMTP gateway configuration"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "httpx>=0.27,<1",
+    "pydantic>=2,<3",
+]
+
+[project.urls]
+Repository = "https://github.com/zhangzqs/smtp-gateway-python"
+
+[build-system]
+requires = ["hatchling<1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smtp_gateway_client"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"../../LICENSE" = "smtp_gateway_client/LICENSE"
+"../../NOTICE" = "smtp_gateway_client/NOTICE"
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.rules]
+missing-override-decorator = "error"

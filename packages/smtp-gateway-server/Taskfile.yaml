@@ -1,0 +1,25 @@
+version: "3"
+
+tasks:
+  fix:
+    desc: 格式化服务端并安全修复 lint
+    cmds:
+      - uv run --locked --all-packages ruff format src tests
+      - uv run --locked --all-packages ruff check --fix src tests
+
+  check:
+    desc: 检查服务端 lint、格式和类型
+    cmds:
+      - uv run --locked --all-packages ruff check src tests
+      - uv run --locked --all-packages ruff format --check src tests
+      - uv run --locked --all-packages ty check --project .
+
+  test:
+    desc: 执行服务端测试
+    cmds:
+      - uv run --locked --all-packages pytest tests
+
+  build:
+    desc: 构建服务端 wheel
+    cmds:
+      - uv build --wheel --package smtp-gateway-server --out-dir ../../dist

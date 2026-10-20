@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from smtp_gateway.persistence import Database, RelayRepository
 from smtp_gateway.services.relay import RelayService
-from smtp_gateway.shared import DeliveryState, SmtpSettingsWrite, TlsMode
+from smtp_gateway.shared import DeliveryState
+from smtp_gateway_client import SmtpSettingsWrite, TlsMode
 
 
 @dataclass(kw_only=True)

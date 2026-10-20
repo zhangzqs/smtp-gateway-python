@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published release tag, for example v0.0.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Resolve published release to its commit
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([a-zA-Z0-9._-]+)?$ ]]; then
+            echo "A version release tag is required" >&2
+            exit 1
+          fi
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          jq -e --arg tag "$RELEASE_TAG" \
+            '.tag_name == $tag and .draft == false and .published_at != null' \
+            <<< "$release" >/dev/null
+          object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          kind="$(jq -r '.object.type' <<< "$object")"
+          commit="$(jq -r '.object.sha' <<< "$object")"
+          while [[ "$kind" == tag ]]; do
+            object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$commit")"
+            kind="$(jq -r '.object.type' <<< "$object")"
+            commit="$(jq -r '.object.sha' <<< "$object")"
+          done
+          [[ "$kind" == commit ]]
+          version="${RELEASE_TAG#v}"
+          stable=false
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            && jq -e '.prerelease == false' <<< "$release" >/dev/null; then
+            stable=true
+          fi
+          {
+            echo "commit=$commit"
+            echo "version=$version"
+            echo "stable=$stable"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.commit }}
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.12.23"
+          enable-cache: true
+      - uses: go-task/setup-task@v2.2.0
+      - name: Check package versions against release tag
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          expected = os.environ["RELEASE_VERSION"]
+          for name in ("smtp-gateway-server", "smtp-gateway-client"):
+              project = tomllib.loads((Path("packages") / name / "pyproject.toml").read_text())["project"]
+              assert project["name"] == name, project
+              assert project["version"] == expected, (name, project["version"], expected)
+          PY
+      - name: Set up workspace
+        run: task setup
+      - name: Check
+        run: task check
+      - name: Test
+        run: task test
+      - name: Build wheels
+        run: task build
+      - name: Verify release wheel artifacts
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          version = os.environ["RELEASE_VERSION"]
+          expected = {
+              f"smtp_gateway_{name}-{version}-py3-none-any.whl"
+              for name in ("server", "client")
+          }
+          actual = {path.name for path in Path("dist").glob("*.whl")}
+          assert actual == expected, (actual, expected)
+          PY
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v6.2.0
+        id: metadata
+        with:
+          context: git
+          images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ steps.release.outputs.version }}
+            type=raw,value=latest,enable=${{ steps.release.outputs.stable }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.commit }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+      - uses: docker/build-push-action@v7.4.0
+        id: image
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=smtp-gateway-server
+          cache-to: type=gha,mode=max,scope=smtp-gateway-server
+      - name: Verify published server command
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}@${{ steps.image.outputs.digest }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: test "$(docker run --rm "$IMAGE" --version)" = "$RELEASE_VERSION"
+      - name: Upload wheels to the release
+        run: gh release upload "$RELEASE_TAG" dist/*.whl --repo "$GITHUB_REPOSITORY" --clobber

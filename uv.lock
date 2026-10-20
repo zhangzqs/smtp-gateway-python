@@ -2,6 +2,13 @@ version = 1
 revision = 5
 requires-python = "==3.11.*"
 
+[manifest]
+members = [
+    "smtp-gateway-client",
+    "smtp-gateway-server",
+    "smtp-gateway-workspace",
+]
+
 [[package]]
 name = "aiosmtpd"
 version = "1.4.6"
@@ -493,9 +500,24 @@ wheels = [
 ]
 
 [[package]]
-name = "smtp-gateway-python"
-version = "0.1.0"
-source = { editable = "." }
+name = "smtp-gateway-client"
+version = "0.0.1"
+source = { editable = "packages/smtp-gateway-client" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "pydantic", specifier = ">=2,<3" },
+]
+
+[[package]]
+name = "smtp-gateway-server"
+version = "0.0.1"
+source = { editable = "packages/smtp-gateway-server" }
 dependencies = [
     { name = "aiosmtpd" },
     { name = "aiosmtplib" },
@@ -505,18 +527,10 @@ dependencies = [
     { name = "fastapi" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
+    { name = "smtp-gateway-client" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "typing-extensions" },
     { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-    { name = "ty" },
 ]
 
 [package.metadata]
@@ -529,14 +543,37 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pydantic-settings", specifier = ">=2.4,<3" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
+    { name = "smtp-gateway-client", editable = "packages/smtp-gateway-client" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.38,<3" },
     { name = "typing-extensions", specifier = ">=4.12,<5" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
+[[package]]
+name = "smtp-gateway-workspace"
+version = "0.0.1"
+source = { virtual = "." }
+dependencies = [
+    { name = "smtp-gateway-client" },
+    { name = "smtp-gateway-server" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "smtp-gateway-client", editable = "packages/smtp-gateway-client" },
+    { name = "smtp-gateway-server", editable = "packages/smtp-gateway-server" },
+]
+
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", specifier = ">=8.2.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "ruff", specifier = ">=0.16.10" },

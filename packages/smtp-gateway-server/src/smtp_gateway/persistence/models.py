@@ -3,7 +3,8 @@
 from sqlalchemy import Float, ForeignKey, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from smtp_gateway.shared import DeliveryState, TlsMode
+from smtp_gateway.shared import DeliveryState
+from smtp_gateway_client import TlsMode
 
 
 class GatewayBase(DeclarativeBase):
