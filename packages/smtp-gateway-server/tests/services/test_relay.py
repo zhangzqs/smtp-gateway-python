@@ -129,13 +129,17 @@ async def test_password_and_content_are_encrypted_and_hidden(storage: _Storage) 
     async with storage.engine.connect() as connection:
         password = await connection.scalar(text("SELECT secret FROM smtp_settings"))
         content = await connection.scalar(text("SELECT content FROM smtp_messages"))
+        subject = await connection.scalar(text("SELECT subject FROM smtp_messages"))
     assert isinstance(password, bytes)
     assert isinstance(content, bytes)
+    assert isinstance(subject, bytes)
     assert b"upstream-secret" not in password
     assert b"private notification body" not in content
     cipher = Fernet(storage.key.encode())
     assert cipher.decrypt(password) == b"upstream-secret"
     assert b"private notification body" in cipher.decrypt(content)
+    assert b"alert" not in subject
+    assert cipher.decrypt(subject) == b"alert"
     settings = (await storage.relay.get_smtp()).model_dump_json()
     status = await storage.relay.status(identifier)
     assert status is not None
@@ -497,6 +501,7 @@ async def test_message_pages_have_stable_order_and_nested_deliveries(
     assert all(page.total == 5 and page.page_size == 2 for page in pages)
     record = pages[0].items[0]
     assert record.sender == "grafana@example.com"
+    assert record.subject == "alert"
     assert record.created_at == datetime.fromtimestamp(storage.clock[0], UTC)
     assert [item.recipient for item in record.deliveries] == [
         "first@example.com",
@@ -523,12 +528,19 @@ async def test_message_records_show_partial_results_without_loading_content(
         max_retry_delay=10,
     )
 
-    def reject_decryption(_value: bytes) -> bytes:
-        raise AssertionError("Listing messages must not decrypt stored data")
+    async with storage.engine.connect() as connection:
+        body = await connection.scalar(text("SELECT content FROM smtp_messages"))
+    cipher = Fernet(storage.key.encode())
 
-    monkeypatch.setattr(storage.relay, "_decrypt", reject_decryption)
+    def reject_body_decryption(value: bytes) -> bytes:
+        if value == body:
+            raise AssertionError("Listing messages must not decrypt the body")
+        return cipher.decrypt(value)
+
+    monkeypatch.setattr(storage.relay, "_decrypt", reject_body_decryption)
     records = await storage.relay.list_messages()
     assert records.items[0].id == identifier
+    assert records.items[0].subject == "alert"
     statuses = {item.recipient: item for item in records.items[0].deliveries}
     assert statuses["first@example.com"].state == DeliveryState.DELIVERED
     assert statuses["first@example.com"].last_error is None
@@ -541,3 +553,91 @@ async def test_message_records_show_partial_results_without_loading_content(
     assert "content" not in response
     assert batch.token not in response
     assert all(item.id not in response for item in batch.recipients)
+
+
+@pytest.mark.asyncio
+async def test_content_is_decrypted_on_demand_and_removed_with_retained_message(
+    storage: _Storage,
+) -> None:
+    identifier = await _enqueue(storage.relay)
+    content = await storage.relay.get_message_content(identifier)
+    assert content is not None
+    assert content.id == identifier
+    assert content.subject == "alert"
+    assert content.text == "private notification body\r\n"
+    assert content.html is None
+    assert await storage.relay.get_message_content("missing") is None
+    batch = await storage.relay.claim(max_attempts=1, lease_seconds=10)
+    assert batch is not None
+    await storage.relay.finish(
+        batch, errors={}, max_attempts=1, retry_delay=0, max_retry_delay=0
+    )
+    storage.clock[0] += 20
+    await storage.relay.prune(retention_seconds=10)
+    assert await storage.relay.get_message_content(identifier) is None
+
+
+@pytest.mark.parametrize("instances", [1, 4])
+@pytest.mark.asyncio
+async def test_existing_database_upgrades_and_backfills_encrypted_subjects(
+    tmp_path: Path, instances: int
+) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}"
+    key = Fernet.generate_key().decode()
+    cipher = Fernet(key.encode())
+    content = b"Subject: =?utf-8?b?5rWL6K+V?=\r\n\r\nlegacy body\r\n"
+    engine = create_async_engine(url)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "CREATE TABLE smtp_messages (id VARCHAR(36) PRIMARY KEY, "
+                "sender VARCHAR(320) NOT NULL, content BLOB NOT NULL, "
+                "created_at FLOAT NOT NULL)"
+            )
+        )
+        await connection.execute(
+            text("INSERT INTO smtp_messages VALUES (:id, :sender, :content, :created)"),
+            [
+                {
+                    "id": f"legacy-{index}",
+                    "sender": "sender@example.com",
+                    "content": cipher.encrypt(content),
+                    "created": 1000 + index,
+                }
+                for index in range(25)
+            ],
+        )
+    relays = [
+        RelayService(
+            database=Database(engine=create_async_engine(url)), encryption_key=key
+        )
+        for _ in range(instances)
+    ]
+    try:
+        await asyncio.gather(*(relay.initialize() for relay in relays))
+        records = await relays[0].list_messages(page_size=100)
+        assert records.total == 25
+        assert all(message.subject == "测试" for message in records.items)
+        preview = await relays[0].get_message_content("legacy-0")
+        assert preview is not None
+        assert preview.subject == "测试"
+        assert preview.text == "legacy body\r\n"
+        async with engine.connect() as connection:
+            stored = list(
+                (
+                    await connection.execute(text("SELECT subject FROM smtp_messages"))
+                ).scalars()
+            )
+        assert all(isinstance(value, bytes) for value in stored)
+        assert all(cipher.decrypt(value).decode() == "测试" for value in stored)
+        await relays[0].initialize()
+        async with engine.connect() as connection:
+            repeated = list(
+                (
+                    await connection.execute(text("SELECT subject FROM smtp_messages"))
+                ).scalars()
+            )
+        assert repeated == stored
+    finally:
+        await asyncio.gather(*(relay.close() for relay in relays))
+        await engine.dispose()

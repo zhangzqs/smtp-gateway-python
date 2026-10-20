@@ -1,12 +1,15 @@
 """数据库连接、session 工厂与并发安全的启动初始化。"""
 
-from sqlalchemy import event, func, select
+from typing import cast
+
+from sqlalchemy import Column, Connection, event, func, inspect, select
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import ConnectionPoolEntry
+from sqlalchemy.schema import CreateColumn
 
-from .models import GatewayBase
+from .models import GatewayBase, MessageRow
 from .repository import RelayRepository
 
 
@@ -32,13 +35,14 @@ class Database:
         return self._sessions()
 
     async def initialize(self) -> None:
-        """串行创建网关自有表，并补齐单例设置行。"""
+        """串行初始化网关表和主题列，并补齐单例设置行。"""
         async with self._engine.begin() as connection:
             if self._engine.dialect.name == "postgresql":
                 await connection.execute(select(func.pg_advisory_xact_lock(717024846)))
             else:
                 await connection.exec_driver_sql("BEGIN IMMEDIATE")
             await connection.run_sync(GatewayBase.metadata.create_all)
+            await connection.run_sync(self._ensure_subject_column)
         try:
             async with self.session() as session, session.begin():
                 await RelayRepository(session).ensure_settings()
@@ -47,6 +51,16 @@ class Database:
             async with self.session() as session:
                 if await RelayRepository(session).settings() is None:
                     raise
+
+    @staticmethod
+    def _ensure_subject_column(connection: Connection) -> None:
+        columns = inspect(connection).get_columns(MessageRow.__tablename__)
+        if any(column["name"] == "subject" for column in columns):
+            return
+        definition = CreateColumn(
+            cast(Column[bytes], MessageRow.__table__.c.subject)
+        ).compile(dialect=connection.dialect)
+        connection.exec_driver_sql(f"ALTER TABLE smtp_messages ADD COLUMN {definition}")
 
     async def check(self) -> None:
         """检查服务的数据库连接。"""

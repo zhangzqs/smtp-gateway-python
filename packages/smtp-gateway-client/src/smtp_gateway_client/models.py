@@ -89,6 +89,7 @@ class MessageRecord(_ResponseModel):
 
     id: str
     sender: str
+    subject: str = ""
     created_at: datetime
     deliveries: list[DeliveryStatus]
 
@@ -99,6 +100,15 @@ class MessageRecord(_ResponseModel):
         if value.utcoffset() is None:
             raise ValueError("Message timestamp must include a time zone")
         return value.astimezone(UTC)
+
+
+class MessageContent(_ResponseModel):
+    """邮件主题和可预览正文；不包含附件或原始邮件。"""
+
+    id: str
+    subject: str
+    text: str | None = Field(default=None, repr=False)
+    html: str | None = Field(default=None, repr=False)
 
 
 class MessagePage(_ResponseModel):
@@ -113,6 +123,7 @@ class MessagePage(_ResponseModel):
 __all__ = [
     "DeliveryState",
     "DeliveryStatus",
+    "MessageContent",
     "MessagePage",
     "MessageRecord",
     "SmtpSettings",

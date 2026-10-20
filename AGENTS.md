@@ -8,7 +8,7 @@
 - `packages/smtp-gateway-server/` 是服务包，`packages/smtp-gateway-client/` 是可独立安装的 HTTP 管理客户端与协议模型包。
 - 下列服务端分层均相对于 `packages/smtp-gateway-server/src/smtp_gateway/`；客户端包不依赖服务实现或持久层。
 - `app.py` 装配具体依赖，管理监听器、worker 和数据库的生命周期。
-- `api/` 处理 HTTP 配置和投递记录查询；`smtp_server/` 和 `smtp_client/` 分别处理接收与上游投递。
+- `api/` 处理 HTTP 配置、投递记录和邮件内容查询；`smtp_server/` 和 `smtp_client/` 分别处理接收与上游投递。
 - `persistence/` 保存 ORM 和 SQL，接收调用方 session；`services/` 负责业务事务、加密与投递编排。
 - `shared/` 只保存多层共享的稳定类型，不执行 I/O。
 - 完整配置模型只进入加载和组装层，其他组件接收实际使用的配置值。
@@ -23,7 +23,7 @@
 - 修改入口、打包或镜像时验证 wheel 安装与容器启动。
 - 发布标签必须与两个成员版本一致；镜像仅安装服务运行所需依赖，两个 wheel 作为 Release 附件发布。
 - 不在日志或错误响应中记录密码、邮件正文或原始配置输入。
-- 邮件只走 SMTP；HTTP 用于配置管理、投递记录查询和健康检查。
+- 邮件只走 SMTP；HTTP 用于配置管理、投递记录与内容查询和健康检查。
 
 ## 风格与提交
 

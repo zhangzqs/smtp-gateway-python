@@ -17,6 +17,7 @@ from smtp_gateway.services import DeliveryWorker, RelayService
 from smtp_gateway_client import (
     DeliveryState,
     DeliveryStatus,
+    MessageContent,
     MessagePage,
     MessageRecord,
 )
@@ -56,7 +57,12 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
 
 @pytest.mark.parametrize(
     ("method", "path"),
-    [("GET", "/v1/smtp"), ("PUT", "/v1/smtp"), ("GET", "/v1/messages")],
+    [
+        ("GET", "/v1/smtp"),
+        ("PUT", "/v1/smtp"),
+        ("GET", "/v1/messages"),
+        ("GET", "/v1/messages/message-id/content"),
+    ],
 )
 def test_basic_auth_is_required(client: TestClient, method: str, path: str) -> None:
     assert client.request(method, path).status_code == 401
@@ -99,9 +105,15 @@ def test_openapi_exposes_configuration_read_only_records_and_health(
     client: TestClient,
 ) -> None:
     document = client.get("/openapi.json").json()
-    assert set(document["paths"]) == {"/healthz", "/v1/smtp", "/v1/messages"}
+    assert set(document["paths"]) == {
+        "/healthz",
+        "/v1/smtp",
+        "/v1/messages",
+        "/v1/messages/{identifier}/content",
+    }
     assert set(document["paths"]["/v1/smtp"]) == {"get", "put"}
     assert set(document["paths"]["/v1/messages"]) == {"get"}
+    assert set(document["paths"]["/v1/messages/{identifier}/content"]) == {"get"}
 
 
 def test_empty_message_page(client: TestClient) -> None:
@@ -141,7 +153,7 @@ def test_message_page_passes_pagination_and_returns_recipient_results(
     assert response.status_code == 200
     records.assert_awaited_once_with(page=2, page_size=10)
     item = response.json()["items"][0]
-    assert set(item) == {"id", "sender", "created_at", "deliveries"}
+    assert set(item) == {"id", "sender", "subject", "created_at", "deliveries"}
     assert item["created_at"] == "2026-10-20T08:00:00Z"
     assert item["deliveries"] == [
         {
@@ -172,6 +184,51 @@ def test_failed_record_storage_returns_unavailable_without_internal_errors(
         AsyncMock(side_effect=OperationalError("select", {}, RuntimeError("private"))),
     )
     response = client.get("/v1/messages", auth=_AUTH)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Gateway storage is unavailable"}
+
+
+def test_content_is_returned_as_json_without_rendering_html(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    content = MessageContent(
+        id="message-id",
+        subject="Alert",
+        text="Private notification body",
+        html="<script>alert('untrusted')</script><p>Notification</p>",
+    )
+    load = AsyncMock(return_value=content)
+    monkeypatch.setattr(RelayService, "get_message_content", load)
+    response = client.get("/v1/messages/message-id/content", auth=_AUTH)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == content.model_dump()
+    load.assert_awaited_once_with("message-id")
+
+
+def test_missing_or_expired_message_content_returns_not_found(
+    client: TestClient,
+) -> None:
+    response = client.get("/v1/messages/unknown/content", auth=_AUTH)
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"detail": "Message not found"}
+
+
+def test_content_storage_error_does_not_echo_body_or_database_details(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        RelayService,
+        "get_message_content",
+        AsyncMock(
+            side_effect=OperationalError(
+                "select", {}, RuntimeError("private notification body")
+            )
+        ),
+    )
+    response = client.get("/v1/messages/message-id/content", auth=_AUTH)
     assert response.status_code == 503
     assert response.json() == {"detail": "Gateway storage is unavailable"}
 

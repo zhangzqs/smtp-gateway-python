@@ -79,6 +79,9 @@ async def test_client_manages_settings_through_server_api(
             assert records.total == 0
             assert records.page == 2
             assert records.page_size == 5
+            with pytest.raises(SmtpGatewayAPIError) as error:
+                await sdk.get_message_content("missing")
+            assert error.value.status_code == 404
         finally:
             await sdk.close()
 
@@ -95,6 +98,9 @@ async def test_client_manages_settings_through_server_api(
             assert error.value.status_code == 401
             with pytest.raises(SmtpGatewayAPIError) as error:
                 await invalid.list_messages()
+            assert error.value.status_code == 401
+            with pytest.raises(SmtpGatewayAPIError) as error:
+                await invalid.get_message_content("missing")
             assert error.value.status_code == 401
         finally:
             await invalid.close()
