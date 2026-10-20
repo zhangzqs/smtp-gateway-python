@@ -86,11 +86,15 @@ def test_response_filters_secret_fields_and_keeps_setting_defaults() -> None:
     assert "private-response-credential" not in repr(response)
 
 
-def test_message_record_normalizes_time_and_filters_nonpublic_fields() -> None:
+@pytest.mark.parametrize("subject", ["", "告警测试"])
+def test_message_record_normalizes_time_and_filters_nonpublic_fields(
+    subject: str,
+) -> None:
     response = MessageRecord.model_validate(
         {
             "id": "message-id",
             "sender": "sender@example.com",
+            "subject": subject,
             "created_at": "2026-10-20T12:30:00+08:00",
             "content": "private-email-body",
             "password": "private-response-credential",
@@ -106,13 +110,30 @@ def test_message_record_normalizes_time_and_filters_nonpublic_fields() -> None:
         }
     )
     assert response.created_at == datetime(2026, 10, 20, 4, 30, tzinfo=UTC)
-    assert response.subject == ""
+    assert response.subject == subject
     assert response.model_dump(mode="json")["created_at"] == "2026-10-20T04:30:00Z"
     assert response.deliveries[0].state == DeliveryState.DELIVERED
     assert response.deliveries[0].attempts == 2
     assert "private-email-body" not in response.model_dump_json()
     assert "private-response-credential" not in response.model_dump_json()
     assert "private-claim-token" not in response.model_dump_json()
+
+
+def test_message_record_requires_subject_without_exposing_input() -> None:
+    with pytest.raises(ValidationError, match="subject") as error:
+        MessageRecord.model_validate(
+            {
+                "id": "message-id",
+                "sender": "sender@example.com",
+                "created_at": "2026-10-20T04:30:00Z",
+                "deliveries": [],
+                "content": "private-email-body",
+                "password": "private-response-credential",
+            }
+        )
+    assert error.value.errors()[0]["type"] == "missing"
+    assert "private-email-body" not in str(error.value)
+    assert "private-response-credential" not in str(error.value)
 
 
 @pytest.mark.parametrize("timestamp", ["2026-10-20T12:30:00", "not-a-time"])
@@ -124,6 +145,7 @@ def test_message_record_rejects_timestamps_without_a_valid_time_zone(
             {
                 "id": "message-id",
                 "sender": "sender@example.com",
+                "subject": "告警测试",
                 "created_at": timestamp,
                 "deliveries": [],
             }
