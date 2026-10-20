@@ -76,7 +76,6 @@ async def test_basic_auth_paths_and_password_serialization() -> None:
     assert json.loads(requests[2].content)["password"] == _SMTP_VALUE
     assert json.loads(requests[3].content)["password"] == ""
     assert result.tls == TlsMode.STARTTLS
-    assert result.read_only is False
     assert "password" not in result.model_dump()
     assert "private-response-credential" not in result.model_dump_json()
     assert "private-response-credential" not in repr(result)

@@ -1,4 +1,4 @@
-"""独立于 GPUStack 业务数据库的网关表。"""
+"""SMTP 上游配置与持久邮件队列表。"""
 
 from sqlalchemy import Float, ForeignKey, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column

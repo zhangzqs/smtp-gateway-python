@@ -50,3 +50,7 @@ tasks:
     cmds:
       - docker build --tag smtp-gateway-python:local .
       - docker run --rm smtp-gateway-python:local --version
+      - >-
+        docker run --rm --entrypoint python smtp-gateway-python:local
+        -c "import asyncpg, ssl; from smtp_gateway.app import create_app;
+        assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0"
