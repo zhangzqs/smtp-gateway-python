@@ -1,0 +1,36 @@
+[project]
+name = "gstack-smtp-gateway"
+version = "0.1.0"
+description = "Durable SMTP relay for GStack alerts"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "aiosmtpd>=1.4.6,<2",
+    "aiosmtplib>=3.0,<6",
+    "aiosqlite>=0.20,<1",
+    "asyncpg>=0.30,<1",
+    "cryptography>=44",
+    "fastapi>=0.115",
+    "pydantic-settings>=2.4,<3",
+    "sqlalchemy[asyncio]>=2.0.38,<3",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+gstack-smtp-gateway = "gstack_smtp_gateway.cli:main"
+
+[build-system]
+requires = ["hatchling<1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gstack_smtp_gateway"]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.rules]
+missing-override-decorator = "error"

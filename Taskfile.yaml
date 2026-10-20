@@ -1,0 +1,25 @@
+version: "3"
+
+tasks:
+  fix:
+    desc: 格式化 SMTP 网关并安全修复 lint 问题
+    cmds:
+      - uv run --locked --all-packages ruff format src tests
+      - uv run --locked --all-packages ruff check --fix src tests
+
+  check:
+    desc: 检查 SMTP 网关静态规则、格式和类型
+    cmds:
+      - uv run --locked --all-packages ruff check src tests
+      - uv run --locked --all-packages ruff format --check src tests
+      - uv run --locked --all-packages ty check --project .
+
+  test:
+    desc: 执行 SMTP 网关测试
+    cmds:
+      - uv run --locked --all-packages pytest tests
+
+  build:
+    desc: 构建独立 SMTP 网关 wheel
+    cmds:
+      - uv build --wheel
