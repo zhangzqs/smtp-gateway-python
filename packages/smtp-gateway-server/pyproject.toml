@@ -1,6 +1,6 @@
 [project]
 name = "smtp-gateway-server"
-version = "0.0.1"
+version = "0.0.2"
 description = "Durable SMTP gateway with authenticated configuration management"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
@@ -14,7 +14,7 @@ dependencies = [
     "fastapi>=0.115",
     "pydantic-settings>=2.4,<3",
     "pyyaml>=6.0,<7",
-    "smtp-gateway-client==0.0.1",
+    "smtp-gateway-client==0.0.2",
     "sqlalchemy[asyncio]>=2.0.38,<3",
     "typing-extensions>=4.12,<5",
     "uvicorn>=0.30",

@@ -87,6 +87,10 @@ class SubmissionHandler:
 
 
 class _TrackedSMTP(SMTP):
+    # 使用通用 LOGIN 提示，兼容按提示内容选择凭据的客户端。
+    AuthLoginUsernameChallenge = "Username:"
+    AuthLoginPasswordChallenge = "Password:"
+
     def __init__(
         self,
         *,
@@ -106,6 +110,8 @@ class _TrackedSMTP(SMTP):
             authenticator=authenticate,
             auth_required=True,
             auth_require_tls=tls_context is not None,
+            # Grafana 的 PLAIN 客户端拒绝未加密连接，内网明文模式使用 LOGIN。
+            auth_exclude_mechanism=["PLAIN"] if tls_context is None else [],
             tls_context=tls_context,
             require_starttls=tls_context is not None,
             decode_data=False,

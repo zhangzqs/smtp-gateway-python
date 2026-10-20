@@ -37,8 +37,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`get()` 与 `put()` 分别调用 `GET /v1/smtp` 和 `PUT /v1/smtp`，返回 `SmtpSettings`。
-认证使用 HTTP Basic Auth，应配置 HTTPS 或受信任的本机链路。客户端固定使用 15 秒超时，忽略环境代理和证书配置，不跟随重定向。
+`get()` 与 `put()` 分别调用 `GET /v1/smtp` 和 `PUT /v1/smtp`，返回 `SmtpSettings`。认证使用 HTTP Basic
+Auth，通过 HTTPS 或受信任内网访问。客户端固定使用 15 秒超时，忽略环境代理和证书配置，不跟随重定向。
 
 `SmtpSettingsWrite.password` 使用 `SecretStr`。省略密码时请求不包含该字段，网关保留已保存的密码；显式传入空字符串时仍将空字符串交给网关校验。
 响应模型过滤额外字段，不包含上游密码。TLS 模式为 `none`、`starttls` 和 `implicit`，默认 `starttls`。
