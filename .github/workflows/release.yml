@@ -119,7 +119,6 @@ jobs:
       - uses: docker/metadata-action@v6.2.0
         id: metadata
         with:
-          context: git
           images: ghcr.io/${{ github.repository }}
           flavor: latest=false
           tags: |
