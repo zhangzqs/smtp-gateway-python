@@ -1,4 +1,4 @@
-"""按收件人认领、恢复和重试持久化投递任务。"""
+"""按邮件批量投递，并按收件人恢复和重试持久化任务。"""
 
 import asyncio
 import logging
@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 class _Sender(Protocol):
-    async def send(self, upstream: Upstream, delivery: ClaimedDelivery) -> None: ...
+    async def send(
+        self, upstream: Upstream, delivery: ClaimedDelivery
+    ) -> dict[str, str]: ...
 
 
 class _Relay(Protocol):
@@ -25,9 +27,10 @@ class _Relay(Protocol):
         self,
         delivery: ClaimedDelivery,
         *,
-        error: str | None,
+        errors: dict[str, str],
         max_attempts: int,
         retry_delay: float,
+        max_retry_delay: float,
     ) -> None: ...
     async def prune(self, retention_seconds: float) -> None: ...
 
@@ -53,7 +56,7 @@ class DeliveryWorker:
         self._policy = policy
 
     async def run_once(self) -> bool:
-        """处理一个收件人；没有到期任务时返回 False。"""
+        """批量处理一封邮件的到期收件人；没有任务时返回 False。"""
         upstream = await self._relay.upstream()
         if upstream is None:
             return False
@@ -63,27 +66,26 @@ class DeliveryWorker:
         )
         if delivery is None:
             return False
-        error = None
         try:
             async with asyncio.timeout(self._policy.delivery_timeout):
-                await self._sender.send(upstream, delivery)
+                errors = await self._sender.send(upstream, delivery)
         except (aiosmtplib.SMTPException, OSError, TimeoutError) as exc:
             # 上游响应文本可能包含认证信息或邮件内容，只保存异常类别。
-            error = type(exc).__name__
+            errors = {
+                item.recipient: type(exc).__name__ for item in delivery.recipients
+            }
             logger.warning(
-                "SMTP delivery failed: delivery=%s attempt=%s reason=%s",
-                delivery.id,
-                delivery.attempts,
-                error,
+                "SMTP delivery failed: message=%s recipients=%s reason=%s",
+                delivery.message_id,
+                len(delivery.recipients),
+                type(exc).__name__,
             )
         await self._relay.finish(
             delivery,
-            error=error,
+            errors=errors,
             max_attempts=self._policy.max_attempts,
-            retry_delay=min(
-                self._policy.retry_delay * 2 ** (delivery.attempts - 1),
-                self._policy.max_retry_delay,
-            ),
+            retry_delay=self._policy.retry_delay,
+            max_retry_delay=self._policy.max_retry_delay,
         )
         return True
 

@@ -2,6 +2,7 @@
 
 from .queue import (
     ClaimedDelivery,
+    ClaimedRecipient,
     DeliveryState,
     DeliveryStatus,
     MessageStatus,
@@ -13,6 +14,7 @@ from .smtp import validate_address
 
 __all__ = [
     "ClaimedDelivery",
+    "ClaimedRecipient",
     "DeliveryState",
     "DeliveryStatus",
     "MessageStatus",

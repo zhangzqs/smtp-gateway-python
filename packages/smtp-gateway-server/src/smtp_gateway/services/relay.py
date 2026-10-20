@@ -1,5 +1,6 @@
 """管理上游凭据和持久队列用例的事务边界。"""
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -8,13 +9,20 @@ from pydantic import SecretStr
 from smtp_gateway.persistence import Database, RelayRepository
 from smtp_gateway.shared import (
     ClaimedDelivery,
+    ClaimedRecipient,
     DeliveryState,
     DeliveryStatus,
     MessageStatus,
     NotConfiguredError,
     Upstream,
 )
-from smtp_gateway_client import SmtpSettings, SmtpSettingsWrite, TlsMode
+from smtp_gateway_client import (
+    MessagePage,
+    MessageRecord,
+    SmtpSettings,
+    SmtpSettingsWrite,
+    TlsMode,
+)
 
 
 class RelayService:
@@ -154,62 +162,108 @@ class RelayService:
                 ],
             )
 
+    async def list_messages(self, *, page: int = 1, page_size: int = 20) -> MessagePage:
+        """分页查询邮件元信息和收件人状态，不读取或解密正文。"""
+        async with self._database.session() as session:
+            repository = RelayRepository(session)
+            total = await repository.message_count()
+            messages = await repository.message_page(
+                offset=(page - 1) * page_size, limit=page_size
+            )
+            deliveries: dict[str, list[DeliveryStatus]] = {
+                message.id: [] for message in messages
+            }
+            if messages:
+                rows = await repository.deliveries_for_messages(list(deliveries))
+                for row in rows:
+                    deliveries[row.message_id].append(
+                        DeliveryStatus(
+                            recipient=row.recipient,
+                            state=DeliveryState(row.state),
+                            attempts=row.attempts,
+                            last_error=row.last_error,
+                        )
+                    )
+            return MessagePage(
+                items=[
+                    MessageRecord(
+                        id=message.id,
+                        sender=message.sender,
+                        created_at=datetime.fromtimestamp(message.created_at, UTC),
+                        deliveries=deliveries[message.id],
+                    )
+                    for message in messages
+                ],
+                total=total,
+                page=page,
+                page_size=page_size,
+            )
+
     async def claim(
         self, *, max_attempts: int, lease_seconds: float
     ) -> ClaimedDelivery | None:
-        """认领到期任务；崩溃中的尝试也计入最大次数。"""
+        """认领同一封邮件的到期收件人；崩溃中的尝试也计入最大次数。"""
         async with self._database.session() as session, session.begin():
             repository = RelayRepository(session)
             now = await repository.now()
             await repository.fail_exhausted(now=now, max_attempts=max_attempts)
             token = str(uuid4())
-            row = await repository.claim(
+            rows = await repository.claim(
                 now=now,
                 max_attempts=max_attempts,
                 token=token,
                 lease_until=now + lease_seconds,
             )
-            if row is None:
+            if not rows:
                 return None
-            message = await repository.message(row.message_id)
+            message = await repository.message(rows[0].message_id)
             if message is None:
                 raise RuntimeError("Queued delivery has no message")
             return ClaimedDelivery(
-                id=row.id,
                 message_id=message.id,
                 token=token,
                 sender=message.sender,
-                recipient=row.recipient,
+                recipients=tuple(
+                    ClaimedRecipient(
+                        id=row.id, recipient=row.recipient, attempts=row.attempts
+                    )
+                    for row in rows
+                ),
                 content=self._decrypt(message.content),
-                attempts=row.attempts,
             )
 
     async def finish(
         self,
         delivery: ClaimedDelivery,
         *,
-        error: str | None,
+        errors: dict[str, str],
         max_attempts: int,
         retry_delay: float,
+        max_retry_delay: float,
     ) -> None:
         """仅当前认领者可记录结果，成功收件人不会再次排队。"""
-        if error is None:
-            state = DeliveryState.DELIVERED
-        elif delivery.attempts >= max_attempts:
-            state = DeliveryState.FAILED
-        else:
-            state = DeliveryState.PENDING
         async with self._database.session() as session, session.begin():
             repository = RelayRepository(session)
             now = await repository.now()
-            await repository.finish(
-                identifier=delivery.id,
-                token=delivery.token,
-                state=state,
-                error=error,
-                next_attempt_at=now + retry_delay,
-                finished_at=now if state != DeliveryState.PENDING else None,
-            )
+            for recipient in delivery.recipients:
+                error = errors.get(recipient.recipient)
+                if error is None:
+                    state = DeliveryState.DELIVERED
+                elif recipient.attempts >= max_attempts:
+                    state = DeliveryState.FAILED
+                else:
+                    state = DeliveryState.PENDING
+                delay = min(
+                    retry_delay * 2 ** (recipient.attempts - 1), max_retry_delay
+                )
+                await repository.finish(
+                    identifier=recipient.id,
+                    token=delivery.token,
+                    state=state,
+                    error=error,
+                    next_attempt_at=now + delay,
+                    finished_at=now if state != DeliveryState.PENDING else None,
+                )
 
     async def prune(self, retention_seconds: float) -> None:
         """清理所有收件人均已结束且超过保留期的邮件。"""

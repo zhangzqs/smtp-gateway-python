@@ -12,6 +12,8 @@ from pydantic import SecretStr
 from typing_extensions import override
 
 from smtp_gateway_client import (
+    DeliveryState,
+    MessagePage,
     SmtpGatewayAPIError,
     SmtpGatewayClient,
     SmtpSettingsWrite,
@@ -213,3 +215,135 @@ async def test_close_releases_the_injected_transport() -> None:
     assert not transport.closed
     await client.close()
     assert transport.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [{}, {"page": 3, "page_size": 100}])
+async def test_list_messages_uses_basic_auth_and_pagination_query(
+    options: dict[str, int],
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "id": "message-id",
+                        "sender": "sender@example.com",
+                        "created_at": "2026-10-20T04:30:00Z",
+                        "content": "private-email-body",
+                        "deliveries": [
+                            {
+                                "recipient": "recipient@example.com",
+                                "state": "pending",
+                                "attempts": 1,
+                                "last_error": "SMTPDataError",
+                            }
+                        ],
+                    }
+                ],
+                "total": 201,
+                "page": int(request.url.params["page"]),
+                "page_size": int(request.url.params["page_size"]),
+            },
+        )
+
+    client = SmtpGatewayClient(
+        url="https://gateway.example.com/",
+        username="operator",
+        password=_API_VALUE,
+        transport=httpx.MockTransport(respond),
+    )
+    try:
+        result = await client.list_messages(**options)
+    finally:
+        await client.close()
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "GET"
+    assert request.url.path == "/v1/messages"
+    assert dict(request.url.params) == {
+        "page": str(options.get("page", 1)),
+        "page_size": str(options.get("page_size", 20)),
+    }
+    authorization = base64.b64encode(f"operator:{_API_VALUE}".encode()).decode()
+    assert request.headers["authorization"] == f"Basic {authorization}"
+    assert isinstance(result, MessagePage)
+    assert result.total == 201
+    assert result.page == options.get("page", 1)
+    assert result.page_size == options.get("page_size", 20)
+    assert result.items[0].deliveries[0].state == DeliveryState.PENDING
+    assert "private-email-body" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    [
+        (httpx.Response(401, text=_API_VALUE), 401),
+        (httpx.Response(500, text=_SMTP_VALUE), 500),
+        (
+            httpx.Response(
+                307, headers={"Location": "https://other.example.com/v1/messages"}
+            ),
+            307,
+        ),
+        (httpx.Response(200, content=_SMTP_VALUE.encode()), 502),
+        (httpx.Response(200, json={"items": _SMTP_VALUE, "total": 0}), 502),
+        (httpx.ConnectError(_API_VALUE), 502),
+        (httpx.ReadTimeout(_SMTP_VALUE), 502),
+    ],
+)
+async def test_list_messages_errors_are_safe_and_do_not_follow_redirects(
+    outcome: httpx.Response | httpx.HTTPError, expected_status: int
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if isinstance(outcome, httpx.HTTPError):
+            raise outcome
+        return outcome
+
+    client = SmtpGatewayClient(
+        url="https://gateway.example.com",
+        username="operator",
+        password=_API_VALUE,
+        transport=httpx.MockTransport(respond),
+    )
+    try:
+        with pytest.raises(SmtpGatewayAPIError) as error:
+            await client.list_messages()
+    finally:
+        await client.close()
+    assert error.value.status_code == expected_status
+    assert str(error.value) == (
+        f"SMTP gateway GET /v1/messages failed with HTTP {expected_status}"
+    )
+    assert _API_VALUE not in str(error.value)
+    assert _SMTP_VALUE not in str(error.value)
+    assert len(requests) == 1
+    assert requests[0].url.host == "gateway.example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("page", "page_size"), [(0, 20), (-1, 20), (1, 0), (1, 101)])
+async def test_list_messages_rejects_invalid_pagination_before_request(
+    page: int, page_size: int
+) -> None:
+    respond = Mock(return_value=httpx.Response(200, json={"items": [], "total": 0}))
+    client = SmtpGatewayClient(
+        url="https://gateway.example.com",
+        username="operator",
+        password=_API_VALUE,
+        transport=httpx.MockTransport(respond),
+    )
+    try:
+        with pytest.raises(ValueError, match="Message page"):
+            await client.list_messages(page=page, page_size=page_size)
+    finally:
+        await client.close()
+    respond.assert_not_called()
