@@ -19,6 +19,7 @@ class SmtpSettingsRow(GatewayBase):
     host: Mapped[str | None] = mapped_column(String(253))
     port: Mapped[int] = mapped_column(default=587)
     username: Mapped[str] = mapped_column(String(320), default="")
+    from_address: Mapped[str] = mapped_column(String(320), default="")
     secret: Mapped[bytes | None] = mapped_column(LargeBinary)
     tls: Mapped[str] = mapped_column(String(16), default=TlsMode.STARTTLS)
 
@@ -48,6 +49,7 @@ class DeliveryRow(GatewayBase):
     lease_until: Mapped[float | None] = mapped_column(Float)
     claim_token: Mapped[str | None] = mapped_column(String(36))
     last_error: Mapped[str | None] = mapped_column(Text)
+    sender: Mapped[str | None] = mapped_column(String(320))
     finished_at: Mapped[float | None] = mapped_column(Float)
 
 

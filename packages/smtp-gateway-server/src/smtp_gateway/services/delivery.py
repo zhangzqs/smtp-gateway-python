@@ -28,6 +28,7 @@ class _Relay(Protocol):
         delivery: ClaimedDelivery,
         *,
         errors: dict[str, str],
+        sender: str,
         max_attempts: int,
         retry_delay: float,
         max_retry_delay: float,
@@ -83,6 +84,7 @@ class DeliveryWorker:
         await self._relay.finish(
             delivery,
             errors=errors,
+            sender=upstream.sender,
             max_attempts=self._policy.max_attempts,
             retry_delay=self._policy.retry_delay,
             max_retry_delay=self._policy.max_retry_delay,

@@ -25,8 +25,13 @@ class Upstream:
     host: str
     port: int
     username: str
+    from_address: str
     password: SecretStr | None = field(repr=False)
     tls: TlsMode
+
+    @property
+    def sender(self) -> str:
+        return self.from_address or self.username
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

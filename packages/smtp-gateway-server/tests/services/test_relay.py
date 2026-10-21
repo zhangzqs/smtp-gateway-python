@@ -82,7 +82,9 @@ async def test_concurrent_initialization_of_empty_database(tmp_path: Path) -> No
         assert len(settings) == 8
         assert all(not item.configured for item in settings)
         await instances[0].put_smtp(
-            SmtpSettingsWrite(host="smtp.example.com", port=587)
+            SmtpSettingsWrite(
+                host="smtp.example.com", port=587, from_address="relay@example.com"
+            )
         )
         assert all(
             item.configured
@@ -131,6 +133,57 @@ async def test_queue_and_settings_survive_database_restart(storage: _Storage) ->
 
 
 @pytest.mark.asyncio
+async def test_sender_setting_overrides_username_and_defaults_to_mailbox(
+    storage: _Storage,
+) -> None:
+    saved = await storage.relay.put_smtp(
+        SmtpSettingsWrite(
+            host="smtp.example.com",
+            port=587,
+            username="relay@example.com",
+            from_address="notices@example.com",
+        )
+    )
+    assert saved.from_address == "notices@example.com"
+    upstream = await storage.relay.upstream()
+    assert upstream is not None
+    assert upstream.sender == "notices@example.com"
+
+    saved = await storage.relay.put_smtp(
+        SmtpSettingsWrite(
+            host="smtp.example.com", port=587, username="relay@example.com"
+        )
+    )
+    assert saved.from_address == ""
+    upstream = await storage.relay.upstream()
+    assert upstream is not None
+    assert upstream.sender == "relay@example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("username", "from_address"),
+    [
+        ("", ""),
+        ("account-name", ""),
+        ("relay@example.com", "invalid"),
+    ],
+)
+async def test_sender_setting_requires_valid_address(
+    storage: _Storage, username: str, from_address: str
+) -> None:
+    with pytest.raises(ValueError, match="valid sender address"):
+        await storage.relay.put_smtp(
+            SmtpSettingsWrite(
+                host="smtp.example.com",
+                port=587,
+                username=username,
+                from_address=from_address,
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_password_and_content_are_encrypted_and_hidden(storage: _Storage) -> None:
     identifier = await _enqueue(storage.relay)
     async with storage.engine.connect() as connection:
@@ -164,7 +217,9 @@ async def test_wrong_encryption_key_fails_during_startup(
     await _enqueue(storage.relay)
     if not with_password:
         await storage.relay.put_smtp(
-            SmtpSettingsWrite(host="smtp.example.com", port=587)
+            SmtpSettingsWrite(
+                host="smtp.example.com", port=587, from_address="relay@example.com"
+            )
         )
     other = RelayService(
         database=Database(engine=create_async_engine(storage.url)),
@@ -227,7 +282,12 @@ async def test_expired_claim_recovers_and_fences_old_owner(storage: _Storage) ->
     assert all(item.attempts == 2 for item in second.recipients)
 
     await storage.relay.finish(
-        first, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
+        first,
+        errors={},
+        max_attempts=3,
+        retry_delay=0,
+        sender="relay@example.com",
+        max_retry_delay=0,
     )
     status = await storage.relay.status(identifier)
     assert status is not None
@@ -235,10 +295,16 @@ async def test_expired_claim_recovers_and_fences_old_owner(storage: _Storage) ->
     assert all(item.attempts == 2 for item in status.deliveries)
 
     await storage.relay.finish(
-        second, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
+        second,
+        errors={},
+        max_attempts=3,
+        retry_delay=0,
+        sender="relay@example.com",
+        max_retry_delay=0,
     )
     await storage.relay.finish(
         first,
+        sender="relay@example.com",
         errors={item.recipient: "stale failure" for item in first.recipients},
         max_attempts=3,
         retry_delay=0,
@@ -278,6 +344,7 @@ async def test_lowering_attempt_limit_terminates_already_exhausted_pending_deliv
     assert first is not None
     await storage.relay.finish(
         first,
+        sender="relay@example.com",
         errors={"operator@example.com": "SMTPException"},
         max_attempts=3,
         retry_delay=100,
@@ -308,6 +375,7 @@ async def test_successful_recipients_are_not_reclaimed(storage: _Storage) -> Non
     assert len(first.recipients) == 2
     await storage.relay.finish(
         first,
+        sender="relay@example.com",
         errors={"second@example.com": "SMTPException"},
         max_attempts=3,
         retry_delay=5,
@@ -352,7 +420,12 @@ async def test_active_batch_blocks_newly_due_recipients_but_not_other_messages(
     assert await storage.relay.claim(max_attempts=3, lease_seconds=30) is None
 
     await storage.relay.finish(
-        first, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
+        first,
+        errors={},
+        max_attempts=3,
+        retry_delay=0,
+        sender="relay@example.com",
+        max_retry_delay=0,
     )
     later = await storage.relay.claim(max_attempts=3, lease_seconds=30)
     assert later is not None
@@ -397,6 +470,7 @@ async def test_batch_uses_each_recipients_attempt_limit_and_retry_delay(
     }
     await storage.relay.finish(
         batch,
+        sender="relay@example.com",
         errors={
             "retry@example.com": "SMTPRecipientRefused:450",
             "exhausted@example.com": "SMTPRecipientRefused:450",
@@ -435,6 +509,7 @@ async def test_retention_preserves_pending_and_active_messages(
     by_message = {claim.message_id: claim for claim in claims if claim is not None}
     await storage.relay.finish(
         by_message[pending],
+        sender="relay@example.com",
         errors={"operator@example.com": "SMTPException"},
         max_attempts=3,
         retry_delay=100,
@@ -442,6 +517,7 @@ async def test_retention_preserves_pending_and_active_messages(
     )
     await storage.relay.finish(
         by_message[finished],
+        sender="relay@example.com",
         errors={},
         max_attempts=3,
         retry_delay=0,
@@ -463,6 +539,7 @@ async def test_retention_waits_for_every_recipient_to_finish(storage: _Storage) 
     assert first is not None
     await storage.relay.finish(
         first,
+        sender="relay@example.com",
         errors={"second@example.com": "SMTPException"},
         max_attempts=3,
         retry_delay=0,
@@ -475,7 +552,12 @@ async def test_retention_waits_for_every_recipient_to_finish(storage: _Storage) 
     assert second is not None
     assert [item.recipient for item in second.recipients] == ["second@example.com"]
     await storage.relay.finish(
-        second, errors={}, max_attempts=3, retry_delay=0, max_retry_delay=0
+        second,
+        errors={},
+        max_attempts=3,
+        retry_delay=0,
+        sender="relay@example.com",
+        max_retry_delay=0,
     )
     await storage.relay.prune(retention_seconds=10)
     assert await storage.relay.status(identifier) is not None
@@ -529,6 +611,7 @@ async def test_message_records_show_partial_results_without_loading_content(
     assert batch is not None
     await storage.relay.finish(
         batch,
+        sender="relay@example.com",
         errors={"second@example.com": "SMTPRecipientRefused"},
         max_attempts=3,
         retry_delay=5,
@@ -577,7 +660,12 @@ async def test_content_is_decrypted_on_demand_and_removed_with_retained_message(
     batch = await storage.relay.claim(max_attempts=1, lease_seconds=10)
     assert batch is not None
     await storage.relay.finish(
-        batch, errors={}, max_attempts=1, retry_delay=0, max_retry_delay=0
+        batch,
+        errors={},
+        max_attempts=1,
+        retry_delay=0,
+        sender="relay@example.com",
+        max_retry_delay=0,
     )
     storage.clock[0] += 20
     await storage.relay.prune(retention_seconds=10)

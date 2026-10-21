@@ -76,7 +76,12 @@ def test_smtp_settings_hide_secrets_and_validate_password_changes(
     client: TestClient,
 ) -> None:
     assert client.get("/v1/smtp", auth=_AUTH).json()["configured"] is False
-    value = {"host": "smtp.example.com", "port": 587, "username": "sender"}
+    value = {
+        "host": "smtp.example.com",
+        "port": 587,
+        "username": "sender",
+        "from_address": "relay@example.com",
+    }
     assert client.put("/v1/smtp", auth=_AUTH, json=value).status_code == 400
     saved = client.put(
         "/v1/smtp",
@@ -163,6 +168,7 @@ def test_message_page_passes_pagination_and_returns_recipient_results(
             "state": "pending",
             "attempts": 1,
             "last_error": "SMTPRecipientRefused",
+            "sender": None,
         }
     ]
 
@@ -279,7 +285,7 @@ def test_invalid_inputs_do_not_echo_passwords(client: TestClient, value: dict) -
 
 
 def test_settings_request_body_limit_is_64_kib(client: TestClient) -> None:
-    value = b'{"host":"mailpit","port":1025,"tls":"none"}'
+    value = b'{"host":"mailpit","port":1025,"tls":"none","from_address":"relay@example.com"}'
     boundary = value + b" " * (64 * 1024 - len(value))
     allowed = client.put(
         "/v1/smtp",

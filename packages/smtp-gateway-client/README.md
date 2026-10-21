@@ -26,6 +26,7 @@ async def main() -> None:
                 host="smtp.example.com",
                 port=587,
                 username=os.environ["SMTP_USERNAME"],
+                from_address=os.environ.get("SMTP_FROM_ADDRESS", ""),
                 password=SecretStr(os.environ["SMTP_PASSWORD"]),
                 tls=TlsMode.STARTTLS,
             )
@@ -48,6 +49,7 @@ asyncio.run(main())
 Auth，通过 HTTPS 或受信任内网访问。客户端固定使用 15 秒超时，忽略环境代理和证书配置，不跟随重定向。
 
 `SmtpSettingsWrite.password` 使用 `SecretStr`。省略密码时请求不包含该字段，网关保留已保存的密码；显式传入空字符串时仍将空字符串交给网关校验。
+`from_address` 可省略，此时使用邮箱格式的 SMTP 用户名作为发件人；没有可用的邮箱用户名时必须设置。投递成功后，收件人记录的 `sender` 是实际发件人地址。
 响应模型过滤额外字段，不包含上游密码。TLS 模式为 `none`、`starttls` 和 `implicit`，默认 `starttls`。
 
 `list_messages(page=1, page_size=20)` 调用 `GET /v1/messages`，返回 `MessagePage`：

@@ -37,6 +37,7 @@ class RelayRepository:
         host: str,
         port: int,
         username: str,
+        from_address: str,
         secret: bytes | None,
         tls: str,
     ) -> bool:
@@ -49,6 +50,7 @@ class RelayRepository:
                 host=host,
                 port=port,
                 username=username,
+                from_address=from_address,
                 secret=secret,
                 tls=tls,
             )
@@ -248,6 +250,7 @@ class RelayRepository:
         token: str,
         state: DeliveryState,
         error: str | None,
+        sender: str | None,
         next_attempt_at: float,
         finished_at: float | None,
     ) -> None:
@@ -258,6 +261,7 @@ class RelayRepository:
             .values(
                 state=state,
                 last_error=error,
+                sender=sender,
                 next_attempt_at=next_attempt_at,
                 lease_until=None,
                 claim_token=None,
