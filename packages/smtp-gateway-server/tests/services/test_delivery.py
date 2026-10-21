@@ -1,6 +1,8 @@
 import asyncio
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -51,7 +53,11 @@ async def queue(
         encryption_key=Fernet.generate_key().decode(),
     )
     await relay.initialize()
-    await relay.put_smtp(SmtpSettingsWrite(host="smtp.example.com", port=587))
+    await relay.put_smtp(
+        SmtpSettingsWrite(
+            host="smtp.example.com", port=587, from_address="relay@example.com"
+        )
+    )
     try:
         yield _Queue(relay=relay, database=database, clock=clock)
     finally:
@@ -83,12 +89,14 @@ async def _enqueue(relay: RelayService, recipients: list[str]) -> str:
 class _Sender:
     failing: set[str] = field(default_factory=set)
     calls: list[tuple[str, ...]] = field(default_factory=list)
+    addresses: list[str] = field(default_factory=list)
 
     async def send(
         self, upstream: Upstream, delivery: ClaimedDelivery
     ) -> dict[str, str]:
         assert upstream.host == "smtp.example.com"
         self.calls.append(tuple(item.recipient for item in delivery.recipients))
+        self.addresses.append(upstream.sender)
         return {
             item.recipient: "SMTPRecipientRefused"
             for item in delivery.recipients
@@ -115,18 +123,37 @@ async def test_worker_delivers_batch_and_only_retries_rejected_recipients(
         "first@example.com": DeliveryState.DELIVERED,
         "second@example.com": DeliveryState.PENDING,
     }
+    assert {item.recipient: item.sender for item in status.deliveries} == {
+        "first@example.com": "relay@example.com",
+        "second@example.com": None,
+    }
+    await queue.relay.put_smtp(
+        SmtpSettingsWrite(
+            host="smtp.example.com", port=587, from_address="new@example.com"
+        )
+    )
     queue.clock[0] += 5
     sender.failing.clear()
     assert await worker.run_once()
     assert not await worker.run_once()
     assert len(sender.calls) == 2
     assert sender.calls[1] == ("second@example.com",)
+    assert sender.addresses == ["relay@example.com", "new@example.com"]
     status = await queue.relay.status(identifier)
     assert status is not None
     assert all(item.state == DeliveryState.DELIVERED for item in status.deliveries)
     assert {item.recipient: item.attempts for item in status.deliveries} == {
         "first@example.com": 1,
         "second@example.com": 2,
+    }
+    assert {item.recipient: item.sender for item in status.deliveries} == {
+        "first@example.com": "relay@example.com",
+        "second@example.com": "new@example.com",
+    }
+    records = await queue.relay.list_messages()
+    assert {item.recipient: item.sender for item in records.items[0].deliveries} == {
+        "first@example.com": "relay@example.com",
+        "second@example.com": "new@example.com",
     }
 
 
@@ -346,6 +373,7 @@ async def test_sender_uses_exact_tls_modes_and_verifies_certificates(
         username="relay@example.com",
         password=SecretStr("upstream-secret"),
         tls=tls,
+        from_address="",
     )
     delivery = _delivery()
     assert await SmtpSender.send(upstream, delivery) == {}
@@ -358,12 +386,47 @@ async def test_sender_uses_exact_tls_modes_and_verifies_certificates(
     )
     client.connect.assert_awaited_once()
     client.login.assert_awaited_once_with("relay@example.com", "upstream-secret")
-    client.sendmail.assert_awaited_once_with(
-        delivery.sender,
-        [item.recipient for item in delivery.recipients],
-        delivery.content,
-    )
+    client.sendmail.assert_awaited_once()
+    envelope, recipients, content = client.sendmail.await_args.args
+    assert envelope == "relay@example.com"
+    assert recipients == [item.recipient for item in delivery.recipients]
+    message = BytesParser(policy=policy.SMTP).parsebytes(content)
+    assert message["From"] == "relay@example.com"
+    assert message.get_payload() == "body\r\n"
     client.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sender_rewrites_envelope_and_from_without_changing_message_content(
+    smtp_constructor: Mock,
+) -> None:
+    upstream = Upstream(
+        host="smtp.example.com",
+        port=587,
+        username="account-name",
+        password=SecretStr("upstream-secret"),
+        tls=TlsMode.STARTTLS,
+        from_address="notices@example.com",
+    )
+    delivery = replace(
+        _delivery(),
+        content=(
+            b'From: "Grafana Alerts" <grafana@example.com>\r\n'
+            b"Sender: internal@example.com\r\n"
+            b"Return-Path: <grafana@example.com>\r\n"
+            b"Message-ID: <alert-1@example.com>\r\n"
+            b"Subject: alert\r\n\r\nbody\r\n"
+        ),
+    )
+    await SmtpSender.send(upstream, delivery)
+    envelope, _, content = smtp_constructor.return_value.sendmail.await_args.args
+    message = BytesParser(policy=policy.SMTP).parsebytes(content)
+    assert envelope == "notices@example.com"
+    assert str(message["From"]) == "Grafana Alerts <notices@example.com>"
+    assert message["Sender"] is None
+    assert message["Return-Path"] is None
+    assert message["Message-ID"] == "<alert-1@example.com>"
+    assert message.get_payload() == "body\r\n"
 
 
 @pytest.mark.asyncio
@@ -387,6 +450,7 @@ async def test_sender_returns_only_refused_recipients_without_upstream_response_
         username="",
         password=None,
         tls=TlsMode.NONE,
+        from_address="relay@example.com",
     )
     assert await SmtpSender.send(upstream, _delivery()) == {
         "second@example.com": "SMTPRecipientRefused"
@@ -421,6 +485,7 @@ async def test_sender_propagates_transaction_errors_and_closes_connection(
         username="",
         password=None,
         tls=TlsMode.NONE,
+        from_address="relay@example.com",
     )
     with pytest.raises(type(error)):
         await SmtpSender.send(upstream, _delivery())
@@ -448,6 +513,7 @@ async def test_sender_closes_connection_when_cancelled(
         username="",
         password=None,
         tls=TlsMode.NONE,
+        from_address="relay@example.com",
     )
     task = asyncio.create_task(SmtpSender.send(upstream, _delivery()))
     await started.wait()

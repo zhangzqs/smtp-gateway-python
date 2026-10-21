@@ -32,6 +32,7 @@ class SmtpSettings(_ResponseModel):
         le=65535,
     )
     username: str = ""
+    from_address: str = ""
     tls: TlsMode = TlsMode.STARTTLS
     has_password: bool = False
 
@@ -56,6 +57,7 @@ class SmtpSettingsWrite(BaseModel):
         default="",
         max_length=320,
     )
+    from_address: str = Field(default="", max_length=320)
     password: SecretStr | None = None
     tls: TlsMode = TlsMode.STARTTLS
 
@@ -82,6 +84,7 @@ class DeliveryStatus(_ResponseModel):
     state: DeliveryState
     attempts: int
     last_error: str | None
+    sender: str | None = None
 
 
 class MessageRecord(_ResponseModel):

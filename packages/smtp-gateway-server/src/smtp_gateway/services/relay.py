@@ -15,6 +15,7 @@ from smtp_gateway.shared import (
     MessageStatus,
     NotConfiguredError,
     Upstream,
+    validate_address,
 )
 from smtp_gateway_client import (
     MessageContent,
@@ -69,6 +70,7 @@ class RelayService:
             host=row.host,
             port=row.port,
             username=row.username,
+            from_address=row.from_address,
             password=SecretStr(self._decrypt(row.secret).decode())
             if row.secret is not None
             else None,
@@ -90,12 +92,19 @@ class RelayService:
             host=upstream.host,
             port=upstream.port,
             username=upstream.username,
+            from_address=upstream.from_address,
             tls=upstream.tls,
             has_password=upstream.password is not None,
         )
 
     async def put_smtp(self, body: SmtpSettingsWrite) -> SmtpSettings:
         """保留省略的密码，并通过版本条件防止并发覆盖。"""
+        try:
+            validate_address(body.from_address or body.username)
+        except ValueError as exc:
+            raise ValueError(
+                "A valid sender address or mailbox username is required"
+            ) from exc
         for _attempt in range(5):
             async with self._database.session() as session, session.begin():
                 repository = RelayRepository(session)
@@ -120,6 +129,7 @@ class RelayService:
                     host=body.host,
                     port=body.port,
                     username=body.username,
+                    from_address=body.from_address,
                     secret=secret,
                     tls=body.tls,
                 )
@@ -161,6 +171,7 @@ class RelayService:
                         state=DeliveryState(row.state),
                         attempts=row.attempts,
                         last_error=row.last_error,
+                        sender=row.sender,
                     )
                     for row in rows
                 ],
@@ -186,6 +197,7 @@ class RelayService:
                             state=DeliveryState(row.state),
                             attempts=row.attempts,
                             last_error=row.last_error,
+                            sender=row.sender,
                         )
                     )
             return MessagePage(
@@ -250,6 +262,7 @@ class RelayService:
         delivery: ClaimedDelivery,
         *,
         errors: dict[str, str],
+        sender: str,
         max_attempts: int,
         retry_delay: float,
         max_retry_delay: float,
@@ -274,6 +287,7 @@ class RelayService:
                     token=delivery.token,
                     state=state,
                     error=error,
+                    sender=sender if error is None else None,
                     next_attempt_at=now + delay,
                     finished_at=now if state != DeliveryState.PENDING else None,
                 )

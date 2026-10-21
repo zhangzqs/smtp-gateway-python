@@ -1,11 +1,24 @@
 """通过指定上游 SMTP 发送邮件，处理认证和 TLS 协议。"""
 
+from email import policy
+from email.parser import BytesParser
+from email.utils import formataddr, parseaddr
 from typing import assert_never
 
 import aiosmtplib
 
 from smtp_gateway.shared import ClaimedDelivery, Upstream
 from smtp_gateway_client import TlsMode
+
+
+def _with_sender(content: bytes, address: str) -> bytes:
+    message = BytesParser(policy=policy.SMTP).parsebytes(content)
+    display_name, _original = parseaddr(str(message.get("From", "")))
+    for header in ("From", "Sender", "Return-Path"):
+        if header in message:
+            del message[header]
+    message["From"] = formataddr((display_name, address))
+    return message.as_bytes(policy=policy.SMTP)
 
 
 class SmtpSender:
@@ -38,9 +51,9 @@ class SmtpSender:
                     upstream.username, upstream.password.get_secret_value()
                 )
             refused, _response = await client.sendmail(
-                delivery.sender,
+                upstream.sender,
                 [item.recipient for item in delivery.recipients],
-                delivery.content,
+                _with_sender(delivery.content, upstream.sender),
             )
             # 仅 DATA 被确认后，未出现在拒收结果中的收件人才算成功。
             return dict.fromkeys(refused, "SMTPRecipientRefused")

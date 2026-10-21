@@ -62,6 +62,7 @@ async def test_client_manages_settings_through_server_api(
                     host="smtp.example.com",
                     port=587,
                     username="sender",
+                    from_address="relay@example.com",
                     password=SecretStr("upstream-credential"),
                     tls=TlsMode.STARTTLS,
                 )
@@ -70,7 +71,12 @@ async def test_client_manages_settings_through_server_api(
             assert saved.has_password
             assert "upstream-credential" not in saved.model_dump_json()
             preserved = await sdk.put(
-                SmtpSettingsWrite(host="smtp.example.com", port=465, username="sender")
+                SmtpSettingsWrite(
+                    host="smtp.example.com",
+                    port=465,
+                    username="sender",
+                    from_address="relay@example.com",
+                )
             )
             assert preserved.has_password
             assert (await sdk.get()).port == 465

@@ -516,7 +516,7 @@ wheels = [
 
 [[package]]
 name = "smtp-gateway-client"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "packages/smtp-gateway-client" }
 dependencies = [
     { name = "httpx2" },
@@ -531,7 +531,7 @@ requires-dist = [
 
 [[package]]
 name = "smtp-gateway-server"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "packages/smtp-gateway-server" }
 dependencies = [
     { name = "aiosmtpd" },
@@ -564,7 +564,7 @@ requires-dist = [
 
 [[package]]
 name = "smtp-gateway-workspace"
-version = "0.0.6"
+version = "0.0.7"
 source = { virtual = "." }
 dependencies = [
     { name = "smtp-gateway-client" },

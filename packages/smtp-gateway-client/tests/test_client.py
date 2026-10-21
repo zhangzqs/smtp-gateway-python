@@ -74,6 +74,7 @@ async def test_basic_auth_paths_and_password_serialization() -> None:
         "host": "smtp.example.com",
         "port": 587,
         "username": "mailer",
+        "from_address": "",
         "tls": "starttls",
     }
     assert json.loads(requests[2].content)["password"] == _SMTP_VALUE
