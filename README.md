@@ -5,7 +5,7 @@ AUTH 提交邮件，网关持久化后返回成功，再由后台连接指定的
 
 HTTP API 管理上游配置并查询投递记录与邮件内容，邮件通过 SMTP Submission 接收。主题、正文和上游密码使用部署方提供的 Fernet 密钥加密保存。
 
-项目使用 uv workspace 管理两个发行包，当前版本均为 `0.0.7`：
+项目使用 uv workspace 管理两个发行包，当前版本均为 `0.0.8`：
 
 | 发行包                | Python 包             | 职责                                 |
 | --------------------- | --------------------- | ------------------------------------ |
@@ -125,11 +125,11 @@ SMTP 成功确认发生在邮件正文和所有收件人任务提交到同一数
 
 ## 容器运行
 
-发布流程通过原生 runner 分别构建 `linux/amd64` 和 `linux/arm64`，验证成功后合并到同一镜像标签，Docker 自动选择与本机匹配的架构。此支持随包含该流程的新版本发布生效；旧版 `0.0.7` 镜像仅包含 AMD64，ARM64 环境需使用后续版本或从源码构建。
+从 `0.0.8` 起，发布流程通过原生 runner 分别构建 `linux/amd64` 和 `linux/arm64`，验证成功后合并到同一镜像标签，Docker 自动选择与本机匹配的架构。旧版 `0.0.7` 镜像仅包含 AMD64。
 
 ```sh
-docker pull ghcr.io/zhangzqs/smtp-gateway-python:0.0.7
-docker run --rm ghcr.io/zhangzqs/smtp-gateway-python:0.0.7 --version
+docker pull ghcr.io/zhangzqs/smtp-gateway-python:0.0.8
+docker run --rm ghcr.io/zhangzqs/smtp-gateway-python:0.0.8 --version
 ```
 
 也可以在仓库根目录运行 `docker build --tag smtp-gateway-python:local .` 从源码构建。运行镜像基于 Alpine，原生依赖使用 musllinux wheel；PyYAML 从源码安装纯 Python 实现。uv、安装清单和构建产物通过
@@ -148,7 +148,7 @@ docker run --rm \
   --env SMTP_GATEWAY_HTTP__AUTH__PASSWORD \
   --env SMTP_GATEWAY_SMTP__AUTH__PASSWORD \
   --env SMTP_GATEWAY_DATABASE__ENCRYPTION_KEY \
-  ghcr.io/zhangzqs/smtp-gateway-python:0.0.7 --config-file /etc/smtp-gateway/config.yaml
+  ghcr.io/zhangzqs/smtp-gateway-python:0.0.8 --config-file /etc/smtp-gateway/config.yaml
 ```
 
 ## Python 管理客户端
@@ -156,7 +156,7 @@ docker run --rm \
 内部调用方可以单独安装发布的客户端 wheel，无需安装 SMTP 服务或数据库依赖：
 
 ```sh
-uv add "smtp-gateway-client @ https://github.com/zhangzqs/smtp-gateway-python/releases/download/v0.0.7/smtp_gateway_client-0.0.7-py3-none-any.whl"
+uv add "smtp-gateway-client @ https://github.com/zhangzqs/smtp-gateway-python/releases/download/v0.0.8/smtp_gateway_client-0.0.8-py3-none-any.whl"
 ```
 
 客户端从 `smtp_gateway_client` 导入，提供 `SmtpGatewayClient`、`SmtpSettings`、`SmtpSettingsWrite`、`TlsMode`
