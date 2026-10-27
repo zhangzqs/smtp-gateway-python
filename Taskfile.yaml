@@ -51,11 +51,20 @@ tasks:
       - task: client:test-wheel
 
   image:
-    desc: 构建服务端镜像并检查命令入口
+    desc: 构建本机架构的服务端镜像并验证启动
     cmds:
       - docker build --tag smtp-gateway-python:local .
-      - docker run --rm smtp-gateway-python:local --version
+      - task: image-check
+        vars:
+          IMAGE: smtp-gateway-python:local
+          VERSION:
+            sh: uv version --package smtp-gateway-server --short
+
+  image-check:
+    desc: 验证指定镜像的版本、运行依赖和 HTTP/SMTP 启动
+    requires:
+      vars: [IMAGE, VERSION]
+    cmds:
       - >-
-        docker run --rm --entrypoint python smtp-gateway-python:local
-        -c "import asyncpg, ssl; from smtp_gateway.app import create_app;
-        assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0"
+        docker run --rm --interactive --network none --entrypoint python "{{.IMAGE}}"
+        - "{{.VERSION}}" < packages/smtp-gateway-server/tests/smoke_image.py

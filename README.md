@@ -125,6 +125,8 @@ SMTP 成功确认发生在邮件正文和所有收件人任务提交到同一数
 
 ## 容器运行
 
+发布流程通过原生 runner 分别构建 `linux/amd64` 和 `linux/arm64`，验证成功后合并到同一镜像标签，Docker 自动选择与本机匹配的架构。此支持随包含该流程的新版本发布生效；旧版 `0.0.7` 镜像仅包含 AMD64，ARM64 环境需使用后续版本或从源码构建。
+
 ```sh
 docker pull ghcr.io/zhangzqs/smtp-gateway-python:0.0.7
 docker run --rm ghcr.io/zhangzqs/smtp-gateway-python:0.0.7 --version
@@ -171,14 +173,17 @@ task test-client-wheel
 task image
 ```
 
+`task image` 在本机架构上构建镜像，并检查版本、原生依赖、CA 证书、HTTP 健康检查与 SMTP 认证。也可以运行
+`task image-check IMAGE=<镜像引用> VERSION=<预期版本>` 验证已有镜像；测试使用隔离网络、临时凭据和容器内数据库。
+
 服务代码位于 `packages/smtp-gateway-server/`，客户端代码位于 `packages/smtp-gateway-client/`。根 Taskfile 聚合成员的检查、测试与两个 wheel 的构建。服务命令仍为
 `smtp-gateway`。
 
 服务的 `app.py` 组装依赖并管理生命周期；`api/` 管理 HTTP 接口，`smtp_server/` 接收 SMTP，`smtp_client/` 连接上游，`services/` 负责事务和投递用例，`persistence/`
 保存 ORM 与 SQL，`shared/` 定义服务内部稳定类型。客户端包提供共享协议模型和 HTTP 封装。
 
-CI 调用 `task setup/check/test/build`，在 Python 3.15 上验证服务与客户端，并通过 `task test-client-wheel` 验证客户端成品在 Python 3.11 中的安装和测试，随后构建 server 镜像。服务端采用 Python 3.15.0／Alpine 3.24，工具链使用 uv 0.13.3、Task 3.54.0 和 Hatchling 1.32.4 及后续 1.x 版本。发布 GitHub
-Release 时，发布工作流先检查标签与两个包的版本一致，再执行相同门禁，将客户端 wheel 上传为 Release 附件，并推送
+CI 使用 AMD64、ARM64 原生 runner 的 matrix，分别调用 `task setup/check/test/build`，在 Python 3.15 上验证服务与客户端，并通过 `task test-client-wheel` 验证客户端成品在 Python 3.11 中的安装和测试，随后通过 `task image` 构建并启动 server 镜像。服务端采用 Python 3.15.0／Alpine 3.24，工具链使用 uv 0.13.3、Task 3.54.0 和 Hatchling 1.32.4 及后续 1.x 版本。发布 GitHub
+Release 时，发布工作流先检查标签与两个包的版本一致，再执行相同门禁，通过 matrix 分别构建和验证两种架构镜像；只有两者均成功后才合并多架构 manifest，将客户端 wheel 上传为 Release 附件，并发布
 `ghcr.io/zhangzqs/smtp-gateway-python:<版本>`；只有稳定版更新 `latest`。服务端 wheel 只用于镜像内部构建，不作为发布附件。不发布到 PyPI。
 
 发布工作流始终检出该已发布 Release 标签对应的 commit。手动重试必须提供已发布的 Release 标签，不能以任意分支代替发布标签。
