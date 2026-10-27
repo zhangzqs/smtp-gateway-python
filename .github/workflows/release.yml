@@ -233,6 +233,7 @@ jobs:
         env:
           IMAGE: ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.version }}
         run: |
+          set -euo pipefail
           docker buildx imagetools inspect "$IMAGE" --raw | jq -e '
             [.manifests[].platform | select(.os == "linux") | .architecture]
             | sort == ["amd64", "arm64"]'
